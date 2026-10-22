@@ -1,5 +1,6 @@
 """Local copies of covers and teardown frames. Instagram CDN links expire, so they are fetched once and served locally."""
 
+import re
 import subprocess
 from pathlib import Path
 
@@ -44,29 +45,74 @@ def download_missing_covers(project_id):
 
 
 def analyze_video(video_url, shortcode, duration=None):
-    """Download the reel, keep small hook/overview frames for review, count hard cuts, then delete the video.
+    """Download the reel, keep small hook/overview/scene frames for review, find the hard cuts, then delete the video.
 
     Frames stay on this machine for human review only; the video file itself is never kept (playbook rule 13).
     """
     out = media_dir(shortcode)
     video = out / "_video.mp4"
-    result = {"hook_frames": [], "frames": [], "cuts": None, "avg_shot_s": None}
+    result = {"hook_frames": [], "frames": [], "cuts": None, "avg_shot_s": None, "scenes": []}
     if not download(video_url, video):
         result["error"] = "Could not download the video"
         return result
     try:
-        for old in list(out.glob("hook_*.jpg")) + list(out.glob("f_*.jpg")):
+        for old in list(out.glob("hook_*.jpg")) + list(out.glob("f_*.jpg")) + list(out.glob("s_*.jpg")):
             old.unlink()
         run = lambda *args: subprocess.run(["ffmpeg", "-loglevel", "error", "-y", *args], capture_output=True, text=True, timeout=300)
         run("-i", str(video), "-t", "3", "-vf", "fps=2,scale=360:-2", str(out / "hook_%02d.jpg"))
         # About 15 overview frames whatever the length: dense for short reels, sparse (max 1 per 2 s) for long ones.
         fps = min(2.0, max(0.5, 15 / duration)) if duration else 0.5
         run("-i", str(video), "-vf", f"fps={fps:.3f},scale=220:-2", "-frames:v", "60", str(out / "f_%03d.jpg"))
-        scene = subprocess.run(["ffmpeg", "-i", str(video), "-vf", "select='gt(scene,0.3)',showinfo", "-f", "null", "-"],
-                               capture_output=True, text=True, timeout=300)
-        result["cuts"] = scene.stderr.count("pts_time:")
+        cuts, scenes = detect_scenes(video, duration)
+        result["cuts"] = len(cuts)
+        # Frames from each scene so motion shows: one in a flash, otherwise a quarter and three quarters in.
+        for k, sc in enumerate(scenes, 1):
+            length = sc["end"] - sc["start"]
+            names = []
+            for n, f in enumerate((0.5,) if length < 1.0 else (0.25, 0.75)):
+                name = f"s_{k:02d}{'ab'[n]}.jpg"
+                run("-ss", f"{sc['start'] + length * f:.3f}", "-i", str(video), "-frames:v", "1", "-vf", "scale=360:-2", str(out / name))
+                if (out / name).exists():
+                    names.append(name)
+            result["scenes"].append({**sc, "frames": names})
         result["hook_frames"] = sorted(p.name for p in out.glob("hook_*.jpg"))
         result["frames"] = sorted(p.name for p in out.glob("f_*.jpg"))
     finally:
         video.unlink(missing_ok=True)
     return result
+
+
+def detect_scenes(video, duration=None, max_scenes=30, min_len=0.3, max_len=6.0):
+    """Hard cuts (seconds) and scenes as {start, end, flash_cuts, cut}.
+
+    Flashes shorter than min_len merge into their shorter neighbour, so a strobe reads as one scene with N flash cuts.
+    Holds longer than max_len split into ~5 s segments with cut=False (the same shot continues), because a green-screen
+    background swap or a speaker changing sides rarely registers as a hard cut. At most max_scenes in all.
+    """
+    probe = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(video)],
+                           capture_output=True, text=True, timeout=60)
+    try:
+        duration = float(probe.stdout.strip())
+    except ValueError:
+        pass
+    scene = subprocess.run(["ffmpeg", "-i", str(video), "-vf", "select='gt(scene,0.3)',showinfo", "-f", "null", "-"],
+                           capture_output=True, text=True, timeout=300)
+    cuts = sorted(float(t) for t in re.findall(r"pts_time:([\d.]+)", scene.stderr))
+    if not duration:
+        return cuts, []
+    bounds = [0.0] + [c for c in cuts if 0 < c < duration] + [duration]
+    shots = [[a, b, 0] for a, b in zip(bounds, bounds[1:]) if b > a]
+    length = lambda k: shots[k][1] - shots[k][0]
+    while len(shots) > 1 and min(map(length, range(len(shots)))) < min_len:
+        i = min(range(len(shots)), key=length)
+        j = i - 1 if i == len(shots) - 1 or (i > 0 and length(i - 1) < length(i + 1)) else i + 1
+        lo, hi = min(i, j), max(i, j)
+        shots[lo:hi + 1] = [[shots[lo][0], shots[hi][1], shots[lo][2] + shots[hi][2] + 1]]
+    seg = max(5.0, duration / max_scenes)
+    scenes = []
+    for a, b, flashes in shots:
+        parts = max(1, round((b - a) / seg)) if b - a > max_len else 1
+        step = (b - a) / parts
+        scenes += [{"start": round(a + step * n, 2), "end": round(a + step * (n + 1), 2), "flash_cuts": flashes if n == 0 else 0,
+                    "cut": n == 0} for n in range(parts)]
+    return cuts, scenes[:max_scenes]

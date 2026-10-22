@@ -7,6 +7,9 @@ angle, delivery, format, beats, value) is left for review and marked as such, ne
 
 import re
 
+BEATS = ["HOOK", "CONTEXT", "PROMISE", "NAME_METHOD", "STEP", "EXAMPLE", "PROOF", "MYTH", "TRUTH", "CONTRAST", "TURN",
+         "RESULT", "LESSON", "RECAP", "LOOP", "CTA"]
+
 VOCAB = {
     "post_type": ["reel", "carousel", "photo"],
     "hook_pattern": ["is_it_possible", "time_ago", "did_you_know_if", "levels_of", "smart_vs_dumb", "good_better_best",

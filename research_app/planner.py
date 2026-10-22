@@ -15,7 +15,8 @@ from datetime import date, timedelta
 import requests
 
 from . import db
-from .annotate import VOCAB
+from .ai import SEALCAM, SEALCAM_KEYS
+from .annotate import BEATS, VOCAB
 from .config import openrouter_key
 
 URL = "https://openrouter.ai/api/v1/chat/completions"
@@ -35,8 +36,6 @@ FUNNEL_FACTOR = {"tofu": 1.15, "mofu": 0.9, "bofu": 0.8}
 AUTHORITY_FACTOR = 0.75
 EVIDENCE_ATTRS = ["hook_pattern", "format", "angle", "video_type", "complexity", "delivery"]
 SKIP_VALUES = {None, "", "none", "unknown", "niche_specific"}
-BEATS = ["HOOK", "CONTEXT", "PROMISE", "NAME_METHOD", "STEP", "EXAMPLE", "PROOF", "MYTH", "TRUTH", "CONTRAST", "TURN",
-         "RESULT", "LESSON", "RECAP", "LOOP", "CTA"]
 
 RULES = """Hard rules:
 1. Borrow STRUCTURE, never CONTENT. Reuse a teardown's hook pattern, beat sequence and format, but write every line new
@@ -80,6 +79,28 @@ Reply with ONLY a JSON object:
  "why": "why this should work, citing the teardown ids and what you reused from each",
  "risk": "the most likely reason it underperforms, and how to avoid it",
  "needs_from_you": ["each [[placeholder]] used, explained"]}}"""
+
+SHOTS_SYSTEM = """You write the shot list for one short-form video (an Instagram Reel) from its script, borrowing the shot
+grammar of the proven outlier scenes it is based on. Each reference scene is described in SEALCaM.
+
+""" + RULES + """
+
+""" + SEALCAM + """
+
+Rules for the shot list:
+4. One shot per camera setup or cut, in order, covering every beat of the script; a beat can take several shots. The
+   durations add up to about the script's length.
+5. For each beat, borrow the framing, camera movement, lighting, pace and on-screen text style of the reference scenes
+   with the same job, but write the subject and environment for THIS creator and THIS script. Never copy a reference's
+   on-screen text or setting details that identify its creator.
+6. Write each SEALCaM field as an explicit instruction for setting the shot up, in the terms above. SEALCaM is visual
+   only: no sound, music or voice in any field.
+7. say: the exact script words spoken during this shot (split a beat's line across its shots), or null.
+   on_screen_text: the text to burn in, or null. reference: the scene it borrows from, as "<id> scene <n>", or null.
+8. Beat labels: {beats}.
+
+Reply with ONLY a JSON object: {{"shots": [{{"beat": str, "duration_s": number, "say": str|null,
+ "on_screen_text": str|null, "S": str, "E": str, "A": str, "L": str, "Ca": str, "M": str, "reference": str|null}}]}}"""
 
 _running = set()
 
@@ -199,9 +220,9 @@ def _run(plan_id, project_id, about, followers, start_date, posts, model, teardo
         _running.discard(project_id)
 
 
-def _chat(model, system, user, temperature):
+def _chat(model, system, user, temperature, max_tokens=6000):
     resp = requests.post(URL, timeout=300, headers={"Authorization": f"Bearer {openrouter_key()}"}, json={
-        "model": model, "temperature": temperature, "max_tokens": 6000, "usage": {"include": True},
+        "model": model, "temperature": temperature, "max_tokens": max_tokens, "usage": {"include": True},
         "response_format": {"type": "json_object"},
         "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
     })
@@ -218,15 +239,75 @@ def _parse(reply):
     return json.loads(match.group(0))  # JSONDecodeError is a ValueError
 
 
-def _chat_json(model, system, user, temperature):
+def _chat_json(model, system, user, temperature, max_tokens=6000):
     """One call, plus one repair pass if the reply isn't valid JSON. Returns (parsed, cost)."""
-    reply, cost = _chat(model, system, user, temperature)
+    reply, cost = _chat(model, system, user, temperature, max_tokens)
     try:
         return _parse(reply), cost
     except ValueError:
         fixed, fix_cost = _chat(model, "You repair broken JSON. Reply with only the corrected JSON object, changing nothing else.",
-                                reply, 0)
+                                reply, 0, max_tokens)
         return _parse(fixed), cost + fix_cost
+
+
+def reference_scenes(shortcodes):
+    """Scene-by-scene SEALCaM breakdowns of the given teardowns, for those that have one."""
+    if not shortcodes:
+        return {}
+    with db.connect() as conn:
+        rows = conn.execute(f"SELECT shortcode, data FROM teardowns WHERE status='done' AND shortcode IN "
+                            f"({','.join('?' * len(shortcodes))})", list(shortcodes)).fetchall()
+    out = {}
+    for r in rows:
+        data = json.loads(r["data"])
+        scenes = [{k: sc.get(k) for k in ("i", "start", "end", "cut", "flash_cuts", "beat", "said", "on_screen_text", *SEALCAM_KEYS)}
+                  for sc in data.get("scenes") or [] if sc.get("S")]
+        if scenes:
+            out[r["shortcode"]] = {"creator": "@" + data["username"], "scenes": scenes}
+    return out
+
+
+def add_shots(posts, context, model):
+    """Fill post["shots"] for each post (in parallel). Returns the cost. A failed post gets post["shots_error"]."""
+    refs = reference_scenes({s for p in posts for s in p.get("source_outliers") or []})
+    system = SHOTS_SYSTEM.format(beats=", ".join(BEATS))
+
+    def one(post):
+        script = {k: post.get(k) for k in ("title", "format", "angle", "delivery", "complexity", "length_s", "hook", "beats", "cta")}
+        sources = {s: refs[s] for s in post.get("source_outliers") or [] if s in refs}
+        try:
+            got, c = _chat_json(model, system, context + f"SCRIPT:\n{json.dumps(script, ensure_ascii=False)}\n\n"
+                                f"REFERENCE SCENES (SEALCaM, by outlier id):\n{json.dumps(sources, ensure_ascii=False) if sources else '(none)'}",
+                                0.5, 10000)
+        except Exception as e:
+            post["shots_error"] = str(e)
+            return 0
+        post["shots"] = [{**{k: sh.get(k) for k in ("beat", "duration_s", "say", "on_screen_text", *SEALCAM_KEYS)},
+                          "reference": sh.get("reference")} for sh in got.get("shots") or [] if sh.get("S")]
+        post.pop("shots_error", None)
+        return c
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        return sum(pool.map(one, posts))
+
+
+def add_shot_lists(plan_id):
+    """Backfill shot lists on a finished plan made before they existed. Returns the cost."""
+    with db.connect() as conn:
+        row = conn.execute("SELECT * FROM plans WHERE id=?", (plan_id,)).fetchone()
+        project = conn.execute("SELECT * FROM projects WHERE id=?", (row["project_id"],)).fetchone()
+    data, inp = json.loads(row["data"]), json.loads(row["input"])
+    cost = add_shots(data["posts"], _context(project, inp.get("about") or "", inp.get("followers")), inp["model"])
+    data["cost"] = round((data.get("cost") or 0) + cost, 4)
+    with db.connect() as conn:
+        conn.execute("UPDATE plans SET data=? WHERE id=?", (json.dumps(data), plan_id))
+    return cost
+
+
+def _context(project, about, followers):
+    return (f"NICHE: {project['niche'] or project['name']}\nKEYWORDS: {', '.join(json.loads(project['keywords']))}\n\n"
+            f"ABOUT THE CREATOR (the only facts you may use about them):\n{about.strip() or '(nothing given: use [[placeholders]])'}\n"
+            f"Followers: {followers if followers is not None else 'unknown'}\n\n")
 
 
 def _outline_problems(posts):
@@ -245,9 +326,7 @@ def _generate(project_id, about, followers, start_date, posts, model, teardowns)
     slots = slots_for(followers, posts)
     vocab = {k: ", ".join(VOCAB[k]) for k in ("angle", "video_type", "delivery", "story_type", "format", "hook_pattern",
                                                "complexity", "cta_mechanic")}
-    context = (f"NICHE: {project['niche'] or project['name']}\nKEYWORDS: {', '.join(json.loads(project['keywords']))}\n\n"
-               f"ABOUT THE CREATOR (the only facts you may use about them):\n{about.strip() or '(nothing given: use [[placeholders]])'}\n"
-               f"Followers: {followers if followers is not None else 'unknown'}\n\n")
+    context = _context(project, about, followers)
     cost = 0.0
 
     # Stage 1: the week's outline, so formats and angles are spread across days.
@@ -295,6 +374,9 @@ def _generate(project_id, about, followers, start_date, posts, model, teardowns)
                         "odds": odds(post, slot, teardowns, rates)})
     if len(planned) < len(slots):
         raise RuntimeError(f"The model returned {len(planned)} of {len(slots)} posts")
+
+    # Stage 3: a SEALCaM shot list for each post, from its script and its sources' scene breakdowns.
+    cost += add_shots(planned, context, model)
     mix = Counter(p["format"] for p in planned)
     return {"posts": planned, "rates": rates, "teardowns_used": len(teardowns), "tier": tier(followers),
             "model": model, "cost": round(cost, 4), "format_mix": mix.most_common(),

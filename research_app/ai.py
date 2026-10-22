@@ -7,7 +7,7 @@ import re
 
 import requests
 
-from .annotate import VOCAB, field
+from .annotate import BEATS, VOCAB, field
 from .config import MEDIA, openrouter_key
 
 URL = "https://openrouter.ai/api/v1/chat/completions"
@@ -174,3 +174,89 @@ def merge(data, result, model, usage):
     data["ai"] = {"model": model, "notes": result.get("notes"), "cost": usage.get("cost"),
                   "tokens": {"in": usage.get("prompt_tokens"), "out": usage.get("completion_tokens")}}
     return data
+
+
+# ---------- scene-by-scene breakdown (SEALCaM) ----------
+
+SEALCAM = """SEALCaM Framework Definition:
+S – Subject: What the camera is optically prioritizing within the frame.
+E – Environment: The physical or constructed space surrounding the subject.
+A – Action: Observable motion within the frame, including subject and camera movement.
+L – Lighting: The lighting setup and exposure characteristics shaping the image.
+Ca – Camera: The capture device, lens choice, framing, angle, and movement strategy.
+M – Metatokens: Technical and stylistic capture cues related to production quality and presentation.
+
+Guidelines:
+S: use shot-focused terminology: primary subject, secondary subject, foreground element, background element.
+E: use production terms: location type, set design, spatial depth, background treatment.
+A: use blocking and motion terms: subject movement, camera movement, environmental motion.
+L: use lighting terms only: key light, fill, rim, practicals, contrast ratio, exposure level, color temperature.
+Ca: must include camera type (cinema camera or stills camera, e.g. ARRI Alexa, RED, Sony FX series, DSLR, mirrorless),
+    lens type and focal length (e.g. 35mm prime, 85mm portrait lens), framing and angle (wide, medium, close-up;
+    eye-level, low-angle) and camera motion (locked-off, handheld, dolly, pan, tilt, tracking).
+M: use visual production qualifiers only: realism level, texture and grain, motion cadence, render or capture quality,
+   platform or delivery cues if visible.
+The fields always appear in this exact order: S, E, A, L, Ca, M."""
+
+SCENES_SYSTEM = """You break a viral short-form video (an Instagram reel) down scene by scene so a creator can reproduce its
+shot grammar. You get each scene's time range, the words spoken during it, how many flash cuts were merged into it,
+whether it opens on a hard cut or continues the previous shot (long holds are split into ~5 s segments), and one or two
+frames from it (a quarter and three quarters in, so you can see motion).
+
+""" + SEALCAM + """
+
+Rules:
+- One entry per scene, in order, with the scene's number as "i". Describe only what the frames show; for motion, compare
+  a scene's two frames. For a scene that continues the previous shot, say what changed. Don't guess at things you can't see.
+- Each field is one or two dense sentences in the terms above. Be explicit: a camera operator should be able to set the
+  shot up from it. SEALCaM is visual only: no sound, music or voice in any field.
+- Ca: name the camera class the image is consistent with. When it plainly reads as a phone, write "smartphone" first,
+  then the closest equivalent (e.g. "smartphone, reads like a mirrorless camera with a 24mm-equivalent wide lens").
+  For screen recordings or pure graphics, write "screen capture" or "motion graphic" and skip the lens.
+- on_screen_text: the text burned into the frame, exactly as written, or null.
+- beat: the scene's job in the script, one of: """ + ", ".join(BEATS) + """.
+
+Reply with ONLY a JSON object: {"scenes": [{"i": int, "beat": str, "on_screen_text": str|null,
+ "S": str, "E": str, "A": str, "L": str, "Ca": str, "M": str}]}"""
+
+SEALCAM_KEYS = ["S", "E", "A", "L", "Ca", "M"]
+
+
+def spoken_in(transcript, start, end):
+    """Words spoken between start and end, spreading each transcript segment's words evenly over its time."""
+    words = []
+    for seg in (transcript or {}).get("segments") or []:
+        parts = seg["text"].split()
+        span = (seg["end"] - seg["start"]) or 0.001
+        words += [w for k, w in enumerate(parts) if start <= seg["start"] + span * (k + 0.5) / len(parts) < end]
+    return " ".join(words) or None
+
+
+def breakdown(data, model):
+    """SEALCaM for each scene the teardown found. Returns (scenes, usage)."""
+    scenes = data.get("scenes") or []
+    if not scenes:
+        raise RuntimeError("No scenes to break down: the video couldn't be analyzed")
+    folder = MEDIA / data["shortcode"]
+    content = [{"type": "text", "text": f"Creator: @{data['username']} · {len(scenes)} scenes · "
+                f"AUDIO FACTS FROM INSTAGRAM: {_audio_facts(data.get('music'))}\n\nCAPTION:\n{(data.get('caption') or '')[:1000]}"}]
+    for sc in scenes:
+        said = sc.get("said") or "(no speech)"
+        content.append({"type": "text", "text": f"SCENE {sc['i']} · {sc['start']:.2f}–{sc['end']:.2f} s"
+                        + ("" if sc.get("cut", True) else " · continues the previous shot (no cut)")
+                        + (f" · {sc['flash_cuts']} flash cuts merged in" if sc.get("flash_cuts") else "") + f" · said: {said}"})
+        names = [url.rsplit("/", 1)[-1] for url in sc.get("frames") or []]
+        content += [{"type": "image_url", "image_url": {"url": _data_url(folder / name)}} for name in names if (folder / name).exists()]
+    resp = requests.post(URL, timeout=300, headers={"Authorization": f"Bearer {openrouter_key()}"}, json={
+        "model": model, "temperature": 0.2, "max_tokens": 16000, "usage": {"include": True},
+        "response_format": {"type": "json_object"},
+        "messages": [{"role": "system", "content": SCENES_SYSTEM}, {"role": "user", "content": content}],
+    })
+    body = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+    if resp.status_code != 200 or "choices" not in body:
+        raise RuntimeError(f"OpenRouter {resp.status_code}: {(body.get('error') or {}).get('message') or resp.text[:200]}")
+    reply = body["choices"][0]["message"]["content"] or ""
+    match = re.search(r"\{.*\}", reply, re.S)
+    if not match:
+        raise RuntimeError("The model did not return JSON")
+    return json.loads(match.group(0)).get("scenes") or [], body.get("usage") or {}

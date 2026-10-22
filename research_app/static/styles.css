@@ -309,6 +309,21 @@ details.raw > summary { cursor: pointer; font-weight: 600; }
 .rung .b { font-size: var(--t-xs); color: var(--faint); font-variant-numeric: tabular-nums; }
 .why-odds { font-size: var(--t-sm); color: var(--muted); margin: var(--s2) 0 0; padding-left: 18px; }
 .why-odds li { margin: 2px 0; }
+/* scenes (teardown) and shots (plan), both in SEALCaM */
+.scenes, .shots { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: var(--s5); }
+.scene { display: grid; grid-template-columns: 172px minmax(0, 1fr); gap: var(--s4); align-items: start; }
+.scene-frames { display: flex; gap: 6px; }
+.scene-frames img { width: 83px; aspect-ratio: 9 / 16; object-fit: cover; border-radius: 4px; background: var(--chip); cursor: zoom-in; }
+.scene-body, .shot { min-width: 0; display: flex; flex-direction: column; gap: var(--s2); }
+.shot + .shot, .scene + .scene { border-top: 1px solid var(--line); padding-top: var(--s5); }
+.scene-h { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2); }
+.scene-h .tc { font-variant-numeric: tabular-nums; color: var(--muted); font-size: var(--t-sm); }
+.scenes .say, .shots .say { margin: 0; font-size: var(--t-lg); line-height: 1.55; }
+.scenes p.small, .shots p.small { margin: 0; }
+dl.rows.sealcam { grid-template-columns: 132px minmax(0, 1fr); gap: var(--s2) var(--s4); }
+dl.rows.sealcam dt b { color: var(--text); font-weight: 700; margin-right: 4px; }
+dl.rows.sealcam dd { font-size: var(--t-md); }
+.brief-tools { margin: var(--s4) 0; }
 .script { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: var(--s3); }
 .script li { display: grid; grid-template-columns: 108px minmax(0, 1fr); gap: var(--s3); align-items: start; }
 .script .say { font-size: var(--t-lg); line-height: 1.55; }
@@ -388,6 +403,8 @@ mark.fill { background: var(--warn-soft); color: var(--warn); border-radius: 4px
   .tab { min-width: 110px; }
   .filmstrip { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   dl.rows, .edit-grid, .script li { grid-template-columns: 1fr; gap: var(--s1) var(--s3); }
+  .scene { grid-template-columns: 1fr; }
+  dl.rows.sealcam { grid-template-columns: 1fr; gap: 2px var(--s3); }
   dl.rows dd { margin-bottom: var(--s2); }
   .day > summary { grid-template-columns: 52px minmax(0, 1fr); }
   .oddsbox { grid-column: 2; align-items: flex-start; text-align: left; }

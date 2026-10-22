@@ -65,6 +65,25 @@ function toast(msg) {
   toast.timer = setTimeout(() => (t.hidden = true), 3500);
 }
 
+// The viewer may refuse the clipboard API (some app views do); fall back to a selected textarea.
+function copyText(text, done) {
+  if (!text) return toast("Nothing to copy yet.");
+  const fallback = () => {
+    const t = document.createElement("textarea");
+    t.value = text; t.setAttribute("readonly", ""); t.style.position = "fixed"; t.style.opacity = "0";
+    document.body.append(t); t.select();
+    const ok = document.execCommand("copy");
+    t.remove();
+    toast(ok ? done : "Couldn't copy. Use Download instead.");
+  };
+  if (navigator.clipboard?.writeText) navigator.clipboard.writeText(text).then(() => toast(done), fallback);
+  else fallback();
+}
+
+const SEALCAM = [["S", "Subject"], ["E", "Environment"], ["A", "Action"], ["L", "Lighting"], ["Ca", "Camera"], ["M", "Metatokens"]];
+const sealcamRows = (item, fx = esc) => `<dl class="rows sealcam">${SEALCAM.filter(([k]) => item[k]).map(([k, name]) =>
+  `<dt><b>${k}</b> ${name}</dt><dd>${fx(item[k])}</dd>`).join("")}</dl>`;
+
 const I = (d) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
 const ICON = {
   home: I('<path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/>'),
@@ -89,6 +108,7 @@ const ICON = {
   edit: I('<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m13.5 6.5 4 4"/>'),
   alert: I('<path d="M12 3 2 20h20z"/><path d="M12 10v4M12 17h.01"/>'),
   calendar: I('<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/>'),
+  copy: I('<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a1 1 0 0 1 1-1h9"/>'),
   trash: I('<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>'),
 };
 
@@ -172,7 +192,7 @@ function pollTeardown() {
   pollTeardown.timer = setTimeout(async () => {
     const td = await api(`/api/teardowns/${sc}`).catch(() => null);
     if (td && S.open === sc) {
-      S.td = { ...td, aiOnly: S.td.aiOnly };
+      S.td = { ...td, mode: S.td.mode };
       if (td.status !== "running") {
         await loadProjectData();
         toast(td.status === "done" ? "Teardown ready" : "Teardown failed: " + td.error);
@@ -251,10 +271,10 @@ async function setOutlierStatus(shortcode, status) {
   render();
 }
 
-async function startTeardown(shortcode, aiOnly = false) {
+async function startTeardown(shortcode, mode = "") {
   try {
-    await api(`/api/teardowns/${shortcode}${aiOnly ? "/ai" : ""}?project_id=${S.projectId}`, { method: "POST" });
-    S.td = { ...(S.td || {}), status: "running", aiOnly };
+    await api(`/api/teardowns/${shortcode}${mode ? "/" + mode : ""}?project_id=${S.projectId}`, { method: "POST" });
+    S.td = { ...(S.td || {}), status: "running", mode };
     render(); pollTeardown();
   } catch (e) { toast(e.message); }
 }
@@ -493,7 +513,7 @@ function teardownPage() {
       </div>
     </div>`;
   if (td.status === "loading") return head + skeleton();
-  if (td.status === "running") return head + `<p class="muted" style="margin:16px 0">${td.aiOnly ? "The AI is re-reading the frames and transcript…" : "Pulling post details, transcript and frames, then running the AI analysis. Usually 30–90 seconds."}</p>` + skeleton();
+  if (td.status === "running") return head + `<p class="muted" style="margin:16px 0">${{ ai: "The AI is re-reading the frames and transcript…", scenes: "Fetching the video again and describing every scene in SEALCaM. Usually under a minute." }[td.mode] || "Pulling post details, transcript and frames, then running the AI analysis. Usually 30–90 seconds."}</p>` + skeleton();
   if (td.status === "none") return head + `<div class="empty-state"><h2>Not torn down yet</h2>
       <p>A teardown pulls the post details and transcript (about 2 ScrapeCreators credits), grabs frames from the video, then has the AI fill in the breakdown${S.status.openrouter ? " (a few cents)" : ""}.</p>
       ${STATIC ? "" : `<button class="btn primary" data-action="teardown">${ICON.cut} Tear down</button>`}</div>`;
@@ -516,6 +536,19 @@ function teardownPage() {
   const facts = (items) => `<div class="facts">${items.filter(([, v]) => v !== null && v !== undefined).map(([k, v]) => `<div class="fact"><span class="k">${k}</span><span class="v">${esc(v)}</span></div>`).join("")}</div>`;
   const evidence = (f.series_evidence?.value || []).length ? `<p class="small muted" style="margin-top:12px">Sibling episodes: ${f.series_evidence.value.map((u, i) => `<a href="${esc(u)}" target="_blank" rel="noopener">episode ${i + 1}</a>`).join(" · ")}</p>` : "";
   const step = duration && frames.length ? Math.max(0.5, Math.round((duration / frames.length) * 2) / 2) : 2;
+  const scenes = (data.scenes || []).filter((sc) => sc.S);
+  const sceneTools = STATIC || !S.status.openrouter ? "" : `<button class="btn sm quiet" data-action="scenes">${ICON.sparkle} ${scenes.length ? "Redo scenes" : "Break down scenes"}</button>`;
+  const scenesSec = `<section class="sec" aria-labelledby="sec-scenes">
+    <div class="sec-h"><h2 id="sec-scenes">Scenes</h2>${sceneTools}</div>
+    ${scenes.length ? `<p class="small muted" style="margin:0 0 16px">${scenes.length} scenes in SEALCaM: subject, environment, action, lighting, camera, metatokens. Long holds are split into segments of the same shot.</p>
+      <ol class="scenes">${scenes.map((sc) => `<li class="scene">
+        <div class="scene-frames">${(sc.frames || []).map((src) => `<img src="${esc(src)}" alt="" loading="lazy" data-zoom="${esc(src)}">`).join("")}</div>
+        <div class="scene-body">
+          <div class="scene-h"><b>Scene ${sc.i}</b><span class="tc">${sc.start.toFixed(1)}–${sc.end.toFixed(1)} s</span>${sc.beat ? `<span class="beat ${esc(sc.beat)}">${esc(sc.beat)}</span>` : ""}
+            <span class="xs faint">${sc.cut === false ? "same shot continues" : "hard cut"}${sc.flash_cuts ? ` · ${sc.flash_cuts} flash cut${sc.flash_cuts === 1 ? "" : "s"}` : ""}</span></div>
+          ${sc.said ? `<p class="say">“${esc(sc.said)}”</p>` : ""}${sc.on_screen_text ? `<p class="small"><b>On screen:</b> ${esc(sc.on_screen_text)}</p>` : ""}
+          ${sealcamRows(sc)}</div></li>`).join("")}</ol>`
+      : `<p class="muted">Not broken down yet. This fetches the video again (the post lookup is cached) and describes every scene in SEALCaM${S.status.openrouter ? ", for a few cents" : ""}.</p>`}</section>`;
   const tools = STATIC ? "" : `<div class="toolbar" style="margin:0">
       ${S.status.openrouter ? `<button class="btn sm" data-action="ai">${ICON.sparkle} ${data.ai ? "Re-analyze with AI" : "Analyze with AI"}</button>` : ""}
       <button class="btn sm quiet" data-action="teardown" title="Re-fetch data and frames; keeps your edits">${ICON.refresh} Re-run teardown</button></div>`;
@@ -529,6 +562,7 @@ function teardownPage() {
     ${section("value", f)}
     ${section("format", f, "", facts([["Average shot", f.avg_shot_s?.value != null ? f.avg_shot_s.value + " s" : null], ["Hard cuts", f.cuts?.value]]) +
       (frames.length ? `<p class="small muted" style="margin:16px 0 8px">The whole video, about one frame every ${step} s</p><div class="timeline">${frames.map((src) => `<img src="${esc(src)}" alt="" loading="lazy" data-zoom="${esc(src)}">`).join("")}</div>` : ""))}
+    ${scenesSec}
     ${section("position", f, "", evidence)}
     ${data.transcript ? `<details class="raw"><summary>Transcript</summary><div class="prose">${esc(data.transcript.text)}</div></details>` : ""}
     ${data.caption ? `<details class="raw"><summary>Caption</summary><div class="prose">${esc(data.caption)}</div></details>` : ""}
@@ -548,8 +582,9 @@ function planTab() {
   const picker = `<div class="toolbar">
       ${S.plans.length > 1 ? `<select data-control="plan" aria-label="Choose a plan">${S.plans.map((x) => `<option value="${x.id}" ${x.id === plan.id ? "selected" : ""}>Plan #${x.id} · ${ago(x.created_at)} · ${esc(x.status)}</option>`).join("")}</select>` : ""}
       <span class="spacer"></span>
+      ${plan.export ? `<button class="btn sm" data-action="copy-week">${ICON.copy} Copy week</button>${STATIC ? "" : `<a class="btn sm" href="/api/plans/${plan.id}/export.md" download>${ICON.download} Export week</a>`}` : ""}
       ${STATIC ? "" : `<button class="btn sm quiet" data-action="delete-plan">${ICON.trash} Delete</button><button class="btn sm" data-action="new-plan">${ICON.calendar} New plan</button>`}</div>`;
-  if (plan.status === "running") return picker + `<div class="page-head"><h1>Planning your week…</h1><p>The AI is adapting proven structures from your teardowns. Usually 1–2 minutes.</p></div>
+  if (plan.status === "running") return picker + `<div class="page-head"><h1>Planning your week…</h1><p>The AI is adapting proven structures from your teardowns, then writing a shot list for each post. Usually 3–4 minutes.</p></div>
     <div class="week" aria-hidden="true">${"<div class='skel block' style='height:76px'></div>".repeat(plan.input?.posts || 7)}</div>`;
   if (plan.status === "failed") return picker + `<div class="notice">${ICON.alert}<div>Planning failed: ${esc(plan.error)}</div></div>
     ${STATIC ? "" : `<button class="btn primary" data-action="new-plan">${ICON.refresh} Try again</button>`}`;
@@ -557,7 +592,7 @@ function planTab() {
   const first = d.posts[0]?.date;
   return picker + `<div class="page-head"><h1>Week of ${first ? dateLabel(first) : ""}</h1>
       <p>${d.posts.length} posts adapted from ${d.teardowns_used} teardowns. Each one names the outliers it borrows from. The odds are this niche's real base rates, adjusted for how strongly the teardowns back each choice; open a post to see the math.</p></div>
-    <div class="week">${d.posts.map((p, i) => planDay(p, i, d.rates)).join("")}</div>`;
+    <div class="week">${d.posts.map((p, i) => planDay(p, i, d.rates, plan.id)).join("")}</div>`;
 }
 
 function planForm(teardowns) {
@@ -578,11 +613,11 @@ function planForm(teardowns) {
       </div>
       <div class="toolbar"><button class="btn primary" type="submit" ${teardowns < 3 || STATIC ? "disabled" : ""}>${ICON.calendar} Plan my week</button>
         ${S.plans.length ? `<button class="btn quiet" type="button" data-action="cancel-plan">Cancel</button>` : ""}
-        <span class="small muted">About 10–20¢ of AI · 1–2 minutes</span></div>
+        <span class="small muted">About $1 of AI · 3–4 minutes, shot lists included</span></div>
     </form>`;
 }
 
-function planDay(p, i, rates) {
+function planDay(p, i, rates, planId) {
   const o = p.odds;
   const ceiling = (rates.p5 || 0.01) * 3;
   const sources = (p.source_outliers || []).map((sc) => outlier(sc)).filter(Boolean);
@@ -598,6 +633,9 @@ function planDay(p, i, rates) {
         <div class="meter ${o.band.split(" ")[0]}"><div style="width:${Math.min(100, (o.p5 / ceiling) * 100)}%"></div></div></div>
     </summary>
     <div class="day-body">
+      <div class="toolbar brief-tools"><span class="small muted">The brief: idea, script, shot list and the reference scenes</span><span class="spacer"></span>
+        <button class="btn sm" data-action="copy-brief" data-slot="${p.slot}">${ICON.copy} Copy brief</button>
+        ${STATIC ? "" : `<a class="btn sm quiet" href="/api/plans/${planId}/export.md?post=${p.slot}" download>${ICON.download} Download .md</a>`}</div>
       <div class="ladder">${rung("p1", "beats your follower count", rates.p1)}${rung("p2", "2× your followers", rates.p2)}${rung("p5", "5× (an outlier)", rates.p5)}${rung("p10", "10×", rates.p10)}</div>
       <ul class="why-odds">
         <li>${o.multiplier}× the niche base rate: evidence ×${o.factors.evidence} · funnel stage ×${o.factors.funnel}${o.factors.source_median_ratio ? ` · its sources median ${o.factors.source_median_ratio}×` : ""}.</li>
@@ -610,6 +648,12 @@ function planDay(p, i, rates) {
         <ol class="script">${(p.beats || []).map((b) => `<li><span class="beat ${esc(b.label)}">${esc(b.label)}</span><div>
           <div class="say">${fills(b.say)}</div>
           <div class="dir">${b.show ? `<b>Film:</b> ${fills(b.show)}` : ""}${b.show && b.edit ? " · " : ""}${b.edit ? `<b>Edit:</b> ${fills(b.edit)}` : ""}</div></div></li>`).join("")}</ol></section>
+      ${(p.shots || []).length ? `<section class="sec"><div class="sec-h"><h2>Shot list</h2><span class="small muted">SEALCaM · one shot per setup or cut</span></div>
+        <ol class="shots">${p.shots.map((sh, k) => `<li class="shot">
+          <div class="scene-h"><b>Shot ${k + 1}</b>${sh.beat ? `<span class="beat ${esc(sh.beat)}">${esc(sh.beat)}</span>` : ""}${sh.duration_s ? `<span class="tc">about ${sh.duration_s} s</span>` : ""}
+            ${sh.reference ? `<span class="xs faint">borrows from ${fills(sh.reference)}</span>` : ""}</div>
+          ${sh.say ? `<p class="say">“${fills(sh.say)}”</p>` : ""}${sh.on_screen_text ? `<p class="small"><b>On screen:</b> ${fills(sh.on_screen_text)}</p>` : ""}
+          ${sealcamRows(sh, fills)}</li>`).join("")}</ol></section>` : p.shots_error ? `<div class="notice">${ICON.alert}<div>The shot list failed: ${esc(p.shots_error)}</div></div>` : ""}
       <section class="sec"><div class="sec-h"><h2>Close and post</h2></div>
         <dl class="rows"><dt>Call to action</dt><dd class="quote">“${fills(p.cta?.line)}”<span class="note">${esc(cap(label(p.cta_type)))} · ${esc(label(p.cta?.mechanic))}</span></dd>
           <dt>Caption</dt><dd>${fills(p.caption_first_line)}<span class="note">${(p.hashtags || []).map((h) => "#" + esc(String(h).replace(/^#/, ""))).join(" ")}</span></dd></dl></section>
@@ -800,7 +844,9 @@ document.addEventListener("click", async (ev) => {
     new: () => { S.view = "new"; S.open = null; render(); },
     "cancel-new": () => { S.view = "research"; render(); },
     run: startRun, stop: stopRun,
-    teardown: () => startTeardown(S.open), ai: () => startTeardown(S.open, true),
+    teardown: () => startTeardown(S.open), ai: () => startTeardown(S.open, "ai"), scenes: () => startTeardown(S.open, "scenes"),
+    "copy-brief": () => copyText(currentPlan()?.export?.posts?.[el.dataset.slot]?.markdown, "Brief copied"),
+    "copy-week": () => copyText(currentPlan()?.export?.week?.markdown, "Week copied"),
     save: () => setOutlierStatus(S.open, "saved"), unsave: () => setOutlierStatus(S.open, "new"), dismiss: () => setOutlierStatus(S.open, "dismissed"),
     "close-teardown": () => { S.open = null; render(); },
     "cancel-edit": () => { S.editing = null; S.edits = {}; renderMain(); },

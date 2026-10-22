@@ -72,8 +72,9 @@ class ScrapeCreators:
         body = self.get("/v1/instagram/profile", handle=handle, trim="true", cache_max_age="30d")
         return (body.get("data") or {}).get("user") or {}
 
-    def post(self, url):
-        body = self.get("/v1/instagram/post", url=url, trim="true", cache_max_age="30d")
+    def post(self, url, fresh=False):
+        """Post details. Cached lookups are free but can hold an expired video link; fresh=True skips the cache."""
+        body = self.get("/v1/instagram/post", url=url, trim="true", **({} if fresh else {"cache_max_age": "30d"}))
         # trim=true puts the media at the top level; the untrimmed shape nests it under data.
         return body.get("xdt_shortcode_media") or (body.get("data") or {}).get("xdt_shortcode_media") or {}
 

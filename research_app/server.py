@@ -6,11 +6,11 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import annotate, config, db, pipeline, planner, teardown
+from . import annotate, brief, config, db, pipeline, planner, teardown
 from .config import DEFAULT_SETTINGS, MEDIA
 from .scrapecreators import ScrapeCreators, ScrapeError
 
@@ -295,6 +295,17 @@ def start_teardown(shortcode: str, project_id: int):
     return {"ok": True}
 
 
+@app.post("/api/teardowns/{shortcode}/scenes")
+def break_down_scenes(shortcode: str, project_id: int):
+    if not config.openrouter_key():
+        raise HTTPException(400, "OPENROUTER_API_KEY is not set")
+    try:
+        teardown.start_scenes(shortcode, project_id)
+    except RuntimeError as e:
+        raise HTTPException(409, str(e))
+    return {"ok": True}
+
+
 @app.post("/api/teardowns/{shortcode}/ai")
 def rerun_ai(shortcode: str, project_id: int):
     if not config.openrouter_key():
@@ -349,8 +360,28 @@ def create_plan(project_id: int, body: PlanIn):
 def list_plans(project_id: int):
     with db.connect() as conn:
         rows = conn.execute("SELECT * FROM plans WHERE project_id=? ORDER BY id DESC", (project_id,)).fetchall()
-    return [{"id": r["id"], "status": r["status"], "error": r["error"], "created_at": r["created_at"],
-             "input": json.loads(r["input"] or "{}"), "data": json.loads(r["data"]) if r["data"] else None} for r in rows]
+    plans = []
+    for r in rows:
+        data = json.loads(r["data"]) if r["data"] else None
+        plans.append({"id": r["id"], "status": r["status"], "error": r["error"], "created_at": r["created_at"],
+                      "input": json.loads(r["input"] or "{}"), "data": data,
+                      "export": brief.plan_exports(project_id, data) if r["status"] == "done" and data else None})
+    return plans
+
+
+@app.get("/api/plans/{plan_id}/export.md")
+def export_plan(plan_id: int, post: int | None = None):
+    """The week (or one post) as a Markdown brief: the content idea and the script."""
+    with db.connect() as conn:
+        row = conn.execute("SELECT * FROM plans WHERE id=?", (plan_id,)).fetchone()
+    if not row or row["status"] != "done":
+        raise HTTPException(404, "No finished plan with that id")
+    exports = brief.plan_exports(row["project_id"], json.loads(row["data"]))
+    item = exports["week"] if post is None else exports["posts"].get(post)
+    if not item:
+        raise HTTPException(404, f"Plan {plan_id} has no post {post}")
+    return Response(item["markdown"], media_type="text/markdown; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="{item["filename"]}"'})
 
 
 @app.delete("/api/plans/{plan_id}")

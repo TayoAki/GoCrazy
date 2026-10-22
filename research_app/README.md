@@ -31,8 +31,8 @@ else still works. Data lives in `data/` (SQLite database, covers, frames), which
 ## Teardown (annotation)
 
 Select an outlier and press **Tear down** (about 2 credits). The app fetches the post details and transcript, downloads the video,
-pulls 6 frames from the first 3 seconds plus about 15 frames across the whole video, counts hard cuts, then **deletes the
-video** (frames stay on your machine for review only).
+pulls 6 frames from the first 3 seconds, about 15 frames across the whole video and one or two frames from every scene,
+finds the hard cuts, then **deletes the video** (frames stay on your machine for review only).
 
 With an OpenRouter key, an AI pass then fills the fields that need eyes (written and visual hook, angle, delivery,
 format, beats, takeaway) from the frames, transcript, caption and Instagram's audio facts. It costs about 2 cents per reel
@@ -51,10 +51,29 @@ Every field on the card shows where its value came from:
 Transcripts are only fetched for reels up to 2 minutes unless you turn on long transcription in the project's
 settings (10 credits per started minute). Music-only reels keep no transcript, since it would only be song lyrics.
 
+## Scenes (SEALCaM)
+
+Each teardown also breaks the video down scene by scene. A scene starts at a hard cut; flash cuts under 0.3 s merge into
+their neighbour, and holds longer than 6 s split into ~5 s segments of the same shot (a green-screen background swap or a
+speaker changing sides rarely registers as a cut). For every scene the AI writes:
+
+| | Field | In terms of |
+|---|---|---|
+| S | Subject | primary and secondary subject, foreground and background elements |
+| E | Environment | location type, set design, spatial depth, background treatment |
+| A | Action | subject movement, camera movement, environmental motion |
+| L | Lighting | key, fill, rim, practicals, contrast ratio, exposure, colour temperature |
+| Ca | Camera | camera type, lens and focal length, framing and angle, camera motion |
+| M | Metatokens | realism, texture and grain, motion cadence, capture quality, platform cues |
+
+plus the scene's beat, its on-screen text and the words spoken during it. It costs 1–9 cents per reel. Teardowns made
+before this existed get a **Break down scenes** button (it fetches the video again; the post lookup is cached).
+
 ## Week plan and odds of virality
 
 **Plan** tab: describe the client (who they are, what they sell, real stories and results), give their follower count
-and a start date, and press **Plan my week** (needs at least 3 teardowns; about 25 cents with the default model).
+and a start date, and press **Plan my week** (needs at least 3 teardowns; about $1 with the default model, most
+of it the shot lists).
 
 1. The week's shape comes from the playbook: the funnel slots (TOFU / MOFU / BOFU) and CTA types for the client's follower tier.
 2. The AI outlines 7 posts, each borrowing the **structure** of named outliers (hook pattern, format, angle, beats), never
@@ -62,6 +81,8 @@ and a start date, and press **Plan my week** (needs at least 3 teardowns; about 
 3. Each post is then written out in full: hook (spoken, on-screen and visual), beat-by-beat script, CTA, caption,
    what to film, and what the client still needs to supply. Anything the client must fill in shows as a `[[placeholder]]`,
    never an invented fact.
+4. Each post gets a **shot list** in SEALCaM, one shot per setup or cut. Each shot borrows the framing, movement,
+   lighting and pace of a named scene in the source outliers' breakdowns, with the client's own subject and setting.
 
 The **odds** are computed in code, not guessed by the AI:
 
@@ -74,6 +95,20 @@ The **odds** are computed in code, not guessed by the AI:
   average (≥ 0.9), below average. Confidence is "medium" with at least 15 teardowns and 500 scanned reels, otherwise "low".
 
 Every post shows its odds ladder, the factors behind it and the outliers it borrows from, so you can check the reasoning.
+
+### Export: the brief
+
+The research ends at a brief that anything downstream can take: a human editor, an AI video tool, or an editing skill.
+**Copy brief** / **Download .md** on a post, or **Export week** for all of them. Each brief is Markdown with:
+
+- **The idea:** topic, angle, hook pattern, odds, why it should work, the outliers it borrows from (with links), the risk
+- **Before you film:** every `[[placeholder]]` to replace with real facts
+- **Script:** the hook (say, on screen, show) and each beat (say, film, edit), the call to action, caption and hashtags
+- **Shot list (SEALCaM):** one entry per shot, with the words said during it
+- **Teleprompter:** just the words, in order
+- **Reference breakdown:** each source outlier scene by scene in SEALCaM
+
+Also available at `GET /api/plans/{id}/export.md` (the week) and `?post=N` (one post).
 
 ## Screen layout
 
