@@ -1,0 +1,284 @@
+"""Research run: keyword search -> creators -> their reels -> outliers (views / followers >= min_ratio)."""
+
+import json
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone
+
+from . import db, media
+from .config import scrapecreators_key
+from .scrapecreators import ScrapeCreators, ScrapeError, reel_from_user_item
+
+_stop_flags = {}
+
+
+class Stopped(Exception):
+    pass
+
+
+class BudgetReached(Exception):
+    pass
+
+
+def start_run(project_id):
+    with db.connect() as conn:
+        if conn.execute("SELECT 1 FROM runs WHERE project_id=? AND status='running'", (project_id,)).fetchone():
+            raise RuntimeError("A research run is already in progress for this project.")
+        cur = conn.execute(
+            "INSERT INTO runs (project_id, status, phase, progress, message, started_at) VALUES (?, 'running', 'search', 0, 'Starting', ?)",
+            (project_id, db.now()))
+        run_id = cur.lastrowid
+    stop = threading.Event()
+    _stop_flags[run_id] = stop
+    threading.Thread(target=_run, args=(run_id, project_id, stop), daemon=True).start()
+    return run_id
+
+
+def stop_run(run_id):
+    if run_id in _stop_flags:
+        _stop_flags[run_id].set()
+
+
+def age_days(iso):
+    if not iso:
+        return None
+    try:
+        then = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return (datetime.now(timezone.utc) - then).days
+
+
+def _update(run_id, **fields):
+    cols = ", ".join(f"{k}=?" for k in fields)
+    with db.connect() as conn:
+        conn.execute(f"UPDATE runs SET {cols} WHERE id=?", (*fields.values(), run_id))
+
+
+def upsert_reel(conn, reel, username):
+    conn.execute("""
+        INSERT INTO reels (shortcode, username, url, views, likes, comments, taken_at, caption, thumb_url, duration, fetched_at)
+        VALUES (:shortcode, :username, :url, :views, :likes, :comments, :taken_at, :caption, :thumb_url, :duration, :fetched_at)
+        ON CONFLICT(shortcode) DO UPDATE SET
+            views=COALESCE(excluded.views, reels.views), likes=COALESCE(excluded.likes, reels.likes),
+            comments=COALESCE(excluded.comments, reels.comments), taken_at=COALESCE(excluded.taken_at, reels.taken_at),
+            caption=COALESCE(NULLIF(excluded.caption, ''), reels.caption), thumb_url=COALESCE(excluded.thumb_url, reels.thumb_url),
+            duration=COALESCE(excluded.duration, reels.duration), fetched_at=excluded.fetched_at""",
+        {**reel, "username": username, "fetched_at": db.now()})
+
+
+def _run(run_id, project_id, stop):
+    client = ScrapeCreators(scrapecreators_key())
+    with db.connect() as conn:
+        project = conn.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone()
+    settings = db.project_settings(project)
+    keywords = json.loads(project["keywords"])
+    stats = {"searches": 0, "creators_found": 0, "creators_scanned": 0, "reels_checked": 0, "new_outliers": 0}
+
+    def check():
+        if stop.is_set():
+            raise Stopped()
+        if client.credits_used >= settings["credit_budget"]:
+            raise BudgetReached()
+
+    status, message = "done", None
+    try:
+        found = _search_phase(run_id, project_id, client, keywords, settings, stats, check)
+        _scan_phase(run_id, project_id, client, found, settings, stats, check, stop)
+    except Stopped:
+        status, message = "stopped", "Stopped by you"
+    except BudgetReached:
+        message = f"Stopped at the credit budget ({settings['credit_budget']})"
+    except ScrapeError as e:
+        status, message = "failed", ("Out of ScrapeCreators credits" if e.out_of_credits else str(e))
+    except Exception as e:  # keep the run row truthful instead of leaving it "running"
+        status, message = "failed", f"{type(e).__name__}: {e}"
+
+    _update(run_id, phase="covers", progress=0.95, message="Downloading covers", credits_used=client.credits_used)
+    media.download_missing_covers(project_id)
+
+    with db.connect() as conn:
+        stats["outliers_total"] = conn.execute("SELECT COUNT(*) FROM outliers WHERE project_id=?", (project_id,)).fetchone()[0]
+    summary = (f"{stats['new_outliers']} new outliers from {stats['reels_checked']} reels across "
+               f"{stats['creators_scanned']} creators · {client.credits_used} credits")
+    _update(run_id, status=status, phase="finished", progress=1, credits_used=client.credits_used,
+            message=message or summary, stats=json.dumps(stats), finished_at=db.now())
+    level = {"done": "success", "stopped": "warning", "failed": "error"}[status]
+    db.log(project_id, level, f"Research run #{run_id}: {message + ' · ' if message else ''}{summary}")
+    _stop_flags.pop(run_id, None)
+
+
+def _search_phase(run_id, project_id, client, keywords, settings, stats, check):
+    found = {}
+    jobs = [(kw, page) for kw in keywords for page in range(1, settings["search_pages"] + 1)]
+    exhausted = set()
+    for i, (kw, page) in enumerate(jobs):
+        if kw in exhausted:
+            continue
+        check()
+        _update(run_id, phase="search", progress=0.2 * i / max(len(jobs), 1),
+                message=f'Searching "{kw}" (page {page})', credits_used=client.credits_used)
+        try:
+            reels = client.search_reels(kw, page, settings["date_posted"])
+        except ScrapeError as e:
+            if e.out_of_credits:
+                raise
+            db.log(project_id, "warning", f'Search failed for "{kw}" page {page}: {e}')
+            continue
+        stats["searches"] += 1
+        if len(reels) < 10:
+            exhausted.add(kw)
+        with db.connect() as conn:
+            for r in reels:
+                owner = r.get("owner") or {}
+                username = owner.get("username")
+                if not username or r.get("is_paid_partnership") or r.get("is_ad"):
+                    continue
+                entry = found.setdefault(username, {"keywords": set(), "full_name": owner.get("full_name"),
+                                                    "is_verified": owner.get("is_verified")})
+                entry["keywords"].add(kw)
+                caption = r.get("caption")
+                upsert_reel(conn, {
+                    "shortcode": r.get("shortcode"), "url": r.get("url"), "views": r.get("video_view_count"),
+                    "likes": r.get("like_count"), "comments": r.get("comment_count"), "taken_at": r.get("taken_at"),
+                    "caption": caption if isinstance(caption, str) else "", "duration": r.get("video_duration"),
+                    "thumb_url": r.get("thumbnail_src") or r.get("display_url"),
+                }, username)
+    if settings["account_search"]:
+        for i, kw in enumerate(keywords):
+            check()
+            _update(run_id, phase="search", progress=0.2 + 0.1 * i / max(len(keywords), 1),
+                    message=f'Searching accounts for "{kw}"', credits_used=client.credits_used)
+            try:
+                profiles = client.search_profiles(kw)
+            except ScrapeError as e:
+                if e.out_of_credits:
+                    raise
+                db.log(project_id, "warning", f'Account search failed for "{kw}": {e}')
+                continue
+            stats["searches"] += 1
+            with db.connect() as conn:
+                for prof in profiles:
+                    username = prof.get("username")
+                    if not username or prof.get("is_private"):
+                        continue
+                    found.setdefault(username, {"keywords": set(), "full_name": prof.get("full_name"),
+                                                "is_verified": prof.get("is_verified")})["keywords"].add(kw)
+                    if prof.get("follower_count") is not None:
+                        # Cache the count so the scan phase skips a paid profile lookup.
+                        conn.execute("""INSERT INTO creators (username, full_name, followers, is_verified, profile_fetched_at)
+                                        VALUES (?,?,?,?,?) ON CONFLICT(username) DO UPDATE SET followers=excluded.followers,
+                                        full_name=excluded.full_name, profile_fetched_at=excluded.profile_fetched_at""",
+                                     (username, prof.get("full_name"), prof["follower_count"], int(bool(prof.get("is_verified"))), db.now()))
+    with db.connect() as conn:
+        for username, entry in found.items():
+            row = conn.execute("SELECT keywords FROM project_creators WHERE project_id=? AND username=?",
+                               (project_id, username)).fetchone()
+            kws = sorted(set(json.loads(row["keywords"])) | entry["keywords"]) if row else sorted(entry["keywords"])
+            conn.execute("""INSERT INTO project_creators (project_id, username, keywords, status) VALUES (?,?,?,'found')
+                            ON CONFLICT(project_id, username) DO UPDATE SET keywords=excluded.keywords""",
+                         (project_id, username, json.dumps(kws)))
+    stats["creators_found"] = len(found)
+    return found
+
+
+def _scan_phase(run_id, project_id, client, found, settings, stats, check, stop):
+    # Creators surfaced by more keywords are more central to the niche, so scan them first.
+    ranked = sorted(found.items(), key=lambda kv: (-len(kv[1]["keywords"]), kv[0]))[: settings["max_creators"]]
+    if not ranked:
+        return
+    lock = threading.Lock()
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        futures = [pool.submit(_scan_creator, client, project_id, username, info, settings, check)
+                   for username, info in ranked]
+        try:
+            for done, fut in enumerate(as_completed(futures), 1):
+                result = fut.result()
+                with lock:
+                    stats["creators_scanned"] += result["scanned"]
+                    stats["reels_checked"] += result["reels"]
+                    stats["new_outliers"] += result["new_outliers"]
+                _update(run_id, phase="creators", progress=0.3 + 0.6 * done / len(futures),
+                        message=f"Scanned {done}/{len(futures)} creators · {stats['new_outliers']} new outliers",
+                        credits_used=client.credits_used)
+        except (Stopped, BudgetReached, ScrapeError):
+            stop.set()  # tells the other workers to stop at their next check
+            pool.shutdown(cancel_futures=True)
+            raise
+
+
+def _scan_creator(client, project_id, username, info, settings, check):
+    result = {"scanned": 0, "reels": 0, "new_outliers": 0}
+
+    def set_status(status):
+        with db.connect() as conn:
+            conn.execute("UPDATE project_creators SET status=? WHERE project_id=? AND username=?", (status, project_id, username))
+
+    with db.connect() as conn:
+        row = conn.execute("SELECT * FROM creators WHERE username=?", (username,)).fetchone()
+    fetched_age = age_days(row["profile_fetched_at"]) if row else None
+    followers = row["followers"] if fetched_age is not None and fetched_age < 30 else None
+    if followers is None:
+        check()
+        try:
+            user = client.profile(username)
+        except ScrapeError as e:
+            if e.out_of_credits:
+                raise
+            set_status("error")
+            return result
+        if user.get("is_private"):
+            set_status("private")
+            return result
+        followers = (user.get("edge_followed_by") or {}).get("count")
+        with db.connect() as conn:
+            conn.execute("""INSERT INTO creators (username, full_name, followers, is_verified, profile_fetched_at) VALUES (?,?,?,?,?)
+                            ON CONFLICT(username) DO UPDATE SET full_name=excluded.full_name, followers=excluded.followers,
+                            is_verified=excluded.is_verified, profile_fetched_at=excluded.profile_fetched_at""",
+                         (username, user.get("full_name") or info.get("full_name"), followers,
+                          int(bool(user.get("is_verified"))), db.now()))
+    if not followers:
+        set_status("error")
+        return result
+    if followers < settings["min_followers"]:
+        set_status("too_small")
+        return result
+    if followers > settings["max_followers"]:
+        set_status("too_big")
+        return result
+
+    max_id = None
+    for _ in range(settings["reel_pages"]):
+        check()
+        try:
+            items, max_id = client.user_reels(username, max_id)
+        except ScrapeError as e:
+            if e.out_of_credits:
+                raise
+            break
+        with db.connect() as conn:
+            for item in items:
+                reel = reel_from_user_item(item)
+                if reel["shortcode"]:
+                    upsert_reel(conn, reel, username)
+                    result["reels"] += 1
+        if not items or not max_id:
+            break
+
+    keyword = sorted(info["keywords"])[0] if info.get("keywords") else None
+    with db.connect() as conn:
+        conn.execute("UPDATE creators SET reels_fetched_at=? WHERE username=?", (db.now(), username))
+        for reel in conn.execute("SELECT shortcode, views, taken_at FROM reels WHERE username=? AND views IS NOT NULL", (username,)):
+            age = age_days(reel["taken_at"])
+            ratio = round(reel["views"] / followers, 1)
+            if ratio >= settings["min_ratio"] and (age is None or age <= settings["max_age_days"]):
+                existed = conn.execute("SELECT 1 FROM outliers WHERE project_id=? AND shortcode=?",
+                                       (project_id, reel["shortcode"])).fetchone()
+                conn.execute("""INSERT INTO outliers (project_id, shortcode, ratio, keyword, created_at) VALUES (?,?,?,?,?)
+                                ON CONFLICT(project_id, shortcode) DO UPDATE SET ratio=excluded.ratio""",
+                             (project_id, reel["shortcode"], ratio, keyword, db.now()))
+                if not existed:
+                    result["new_outliers"] += 1
+    set_status("scanned")
+    result["scanned"] = 1
+    return result

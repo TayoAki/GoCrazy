@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Outlier Research</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23d9482b'/%3E%3Cpath d='M9 22 15 14l4 4 5-8' stroke='white' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <nav class="rail" aria-label="Main">
+    <button class="rail-btn" data-view="home" title="Home" aria-label="Home"></button>
+    <button class="rail-btn" data-view="research" title="Research" aria-label="Research"></button>
+    <button class="rail-btn" data-view="activity" title="Activity" aria-label="Activity"><span class="dot" id="activity-dot" hidden></span></button>
+    <button class="rail-btn" data-view="bank" title="Bank (saved outliers)" aria-label="Bank"></button>
+    <button class="rail-btn" data-view="settings" title="Settings" aria-label="Settings"></button>
+    <div class="rail-spacer"></div>
+    <button class="rail-btn avatar" data-view="settings" title="Account and credits" aria-label="Account"></button>
+  </nav>
+
+  <aside class="sidebar" id="sidebar"></aside>
+
+  <main class="main" id="main"></main>
+
+  <aside class="right" id="right"></aside>
+
+  <footer class="bottombar" id="bottombar"></footer>
+
+  <dialog id="modal"></dialog>
+  <div class="toast" id="toast" role="status" hidden></div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

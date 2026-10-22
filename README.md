@@ -39,3 +39,10 @@ outliers (ScrapeCreators), extracts their elements, builds fill-in-the-blank tem
 for a client's niche (OpenRouter), with optional rendering (Hypit). In this repo, Claude Code picks it up as the
 `short-form-content` skill (`.claude/skills/short-form-content/SKILL.md`). API keys go in environment variables
 (`SCRAPECREATORS_API_KEY`, `OPENROUTER_API_KEY`, `SUPADATA_API_KEY`), never in files.
+
+## Outlier research app
+
+[`research_app/`](research_app/README.md) is a local web app for the research step: it finds outliers in a niche with
+ScrapeCreators (views ÷ followers ≥ 5), then tears each one down (transcript, video frames, cut count) and has an
+OpenRouter vision model fill in the teardown card for review. Run it with `python -m research_app` and open
+http://127.0.0.1:8000.

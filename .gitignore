@@ -9,3 +9,6 @@ RECIPE_BOOK.md
 
 # Agent run outputs (client data)
 work/
+
+# Research app local data (database, covers, frames)
+data/
