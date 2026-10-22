@@ -5,6 +5,7 @@ measures from the pixels: the letters' actual colour, how many lines there are, 
 sits, as % of the frame and as pixels on a 1080×1920 reel.
 """
 
+import re
 import statistics
 
 import numpy as np
@@ -108,3 +109,41 @@ def describe(block):
     if block.get("animation") and block["animation"] != "static":
         bits.append(block["animation"])
     return ", ".join(str(b) for b in bits if b)
+
+
+def check(text, reference_blocks):
+    """Make a shot's on-screen text follow its reference's text, and say where it still differs.
+
+    Case and the spacing around symbols such as "+" are mechanical, so they're copied. Line count, punctuation and emoji
+    change what the text says, so they're reported, not changed. Returns (text, [differences]).
+    """
+    if not text or not reference_blocks:
+        return text, []
+    ref = reference_blocks[0]
+    model = ref.get("text") or ""
+    kase = ref.get("case")
+    if kase == "upper":
+        text = text.upper()
+    elif kase == "lower":
+        text = text.lower()
+    for sym in "+&=→×|":  # spacing around a symbol is mechanical: copy the reference's
+        if sym in model and sym in text:
+            tight = f" {sym} " not in model
+            text = re.sub(rf"[ \t]*{re.escape(sym)}[ \t]*", sym if tight else f" {sym} ", text)
+    issues = []
+    ref_lines, new_lines = model.count("\n") + 1, text.count("\n") + 1
+    if len(reference_blocks) == 1 and ref_lines != new_lines:
+        issues.append(f"{new_lines} line{'s' if new_lines != 1 else ''} where the reference has {ref_lines}")
+    for sym in "+&/=→×|":
+        if sym in model and sym in text:
+            tight_ref, tight_new = f" {sym} " not in model, f" {sym} " not in text
+            if tight_ref != tight_new:
+                issues.append(f"“{sym}” {'with' if tight_ref else 'without'} spaces around it; the reference has it {'tight' if tight_ref else 'spaced'}")
+    punct = lambda s: {c for c in s if c in ".,!?…:;\"'()-–—"}
+    if punct(model) != punct(text):
+        extra, missing = sorted(punct(text) - punct(model)), sorted(punct(model) - punct(text))
+        issues.append("punctuation differs" + (f": adds {' '.join(extra)}" if extra else "") + (f"; drops {' '.join(missing)}" if missing else ""))
+    emoji = lambda s: any(ord(c) > 0x2600 for c in s)
+    if emoji(model) != emoji(text):
+        issues.append("the reference " + ("uses" if emoji(model) else "has no") + " emoji")
+    return text, issues

@@ -73,7 +73,21 @@ def align(template, text):
             continue
         inner, names = _pattern(item)
         found = list(re.finditer(inner, value.strip(), re.I | re.S))
-        if not found or not names or sum(len(m.group(0)) for m in found) < len(value.strip()) * 0.8:
+        if not found or not names:
+            return None
+        if re.search(r"\w", SLOT.sub("", item)):
+            # Frame words mark where each repeat starts, so match the repeats back to back, trying the most first so one
+            # repeat can't swallow two. (Without frame words this would try every split, so those keep the scan below.)
+            # Repeats meet at punctuation or a line break, else at a space; never mid-word.
+            joints = (rf"(?:\s*[{PUNCT}]+\s*|\s*\n\s*|(?<=[\n{PUNCT}])\s*)", rf"(?:\s*[{PUNCT}]+\s*|\s+|(?<=[\s{PUNCT}]))")
+            m = next((m for count in range(len(found), 0, -1) for joint in joints
+                      if (m := re.fullmatch(joint.join([inner] * count), value.strip(), re.I | re.S))), None)
+            if not m:
+                return None
+            count = len(m.groups()) // len(names)
+            uses += [(n, _clean(v)) for n, v in zip(names * count, m.groups())]
+            continue
+        if sum(len(m.group(0)) for m in found) < len(value.strip()) * 0.8:
             return None
         count = len(found)
         for m in found:
@@ -139,3 +153,40 @@ def post_sheet(post, slots=None):
     lines = [(f"{k.capitalize()} hook", hook.get(f"{k}_template"), hook.get(k)) for k in ("verbal", "written", "visual")]
     lines += [(b.get("label") or "Line", b.get("template"), b.get("say")) for b in post.get("beats") or []]
     return sheet(lines, slots)
+
+
+COMMON = set("""I The A An And Or But If So You Your My We Our It This That These Those Here There What Why How When Where Who
+Which Remember Save Follow Comment Share Like Day Part Step Number First Second Third Last Next Today Now Yes No Not Instagram
+Reel Reels TikTok YouTube""".split())
+
+
+def distinctive(lines):
+    """The reference's own specific content: numbers (3+ digits) and names. A name is a capitalised word that appears
+    somewhere other than the start of a sentence, is never written in lowercase in the reference, and isn't all caps
+    (all caps is emphasis). Hashtags, handles and links are ignored."""
+    text = re.sub(r"https?://\S+|[#@][\w.]+", " ", "\n".join(l for l in lines if l))
+    lower = set(re.findall(r"\b[a-z][\w'’]*", text))
+    found = set()
+    for sentence in re.split(r"(?<=[.!?:\n])\s+|\n", text):
+        words = [w.strip(".,'’!?:;()\"") for w in re.findall(r"[\w'’,.]+", sentence)]
+        long = [w for w in words if len(w) >= 3 and w[0].isalpha()]
+        title_case = len(long) >= 3 and sum(w[0].isupper() for w in long) / len(long) >= 0.6  # a headline: capitals mean nothing
+        for k, w in enumerate(words):
+            digits = re.sub(r"\D", "", w)
+            if len(digits) >= 3 and not re.fullmatch(r"[1-9]0{2,3}", digits):  # 100, 500, 1000 are too common to count
+                found.add(w)
+            elif (k > 0 and not title_case and len(w) >= 3 and w[0].isupper() and not w.isupper()
+                  and not re.match(r"I['’]", w) and w.lower() not in lower and w not in COMMON):
+                found.add(w)
+    return found
+
+
+def reused(text, tokens):
+    """Which of the reference's own content words a text reuses."""
+    return sorted(t for t in tokens if re.search(rf"(?<![\w]){re.escape(t)}(?![\w])", text or ""))
+
+
+def copies(text, tokens):
+    """A text copies the reference's content when it reuses any of its numbers, or two or more of its names."""
+    hits = reused(text, tokens)
+    return hits if any(re.search(r"\d", h) for h in hits) or len(hits) >= 2 else []

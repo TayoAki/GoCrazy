@@ -761,6 +761,7 @@ function planDay(p, i, rates, planId) {
             ${sh.reference ? shotRef(sh.reference) : ""}</div>
           ${sh.say ? `<p class="say">“${fills(sh.say)}”</p>` : ""}${sh.on_screen_text ? `<p class="small"><b>On screen:</b> ${fills(sh.on_screen_text)}</p>` : ""}
           ${(sh.reference_text || []).map((rt) => `<p class="small text-spec"><b>Text style</b> (match the reference, which said “${esc(rt.text)}”): ${esc(rt.spec)}</p>`).join("")}
+          ${(sh.text_check || []).length ? `<p class="small warn-text"><b>Check the text:</b> ${esc(sh.text_check.join("; "))}</p>` : ""}
           ${sealcamRows(sh, fills)}
           ${sh.kept || sh.changed ? `<p class="small muted">${sh.kept ? `<b>Kept:</b> ${fills(sh.kept)}` : ""}${sh.kept && sh.changed ? " · " : ""}${sh.changed ? `<b>Changed:</b> ${fills(sh.changed)}` : ""}</p>` : ""}</li>`).join("")}</ol></section>` : p.shots_error ? `<div class="notice">${ICON.alert}<div>The shot list failed: ${esc(p.shots_error)}</div></div>` : ""}
       <section class="sec"><div class="sec-h"><h2>Close and post</h2></div>
@@ -769,6 +770,7 @@ function planDay(p, i, rates, planId) {
       <section class="sec"><div class="sec-h"><h2>Why it should work</h2></div>
         <p>${fills(p.why)}</p>
         <p class="small muted" style="margin-top:12px"><b>Risk:</b> ${fills(p.risk)}</p>
+        ${(p.reuse || []).length ? `<p class="small warn-text" style="margin-top:8px"><b>Check:</b> this script reuses its reference's own content (${esc(p.reuse.join(", "))}); swap it for the creator's own.</p>` : ""}
         ${(p.needs_from_you || []).length ? `<p class="small" style="margin-top:12px"><b>You need to fill in:</b></p><ul class="why-odds">${p.needs_from_you.map((n) => `<li>${fills(n)}</li>`).join("")}</ul>` : ""}
       </section>
     </div></details>`;

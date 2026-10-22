@@ -159,7 +159,10 @@ def post_markdown(post, rates, sources, refs=None, level=1, cards=None):
     if borrowed:
         out.append("- **Borrows its structure from:**")
         out += [f"  - @{s['username']}, {s['ratio']}× their followers: {s['url']}" for s in borrowed]
-    out += [f"- **Risk:** {t(post.get('risk'))}", ""]
+    out += [f"- **Risk:** {t(post.get('risk'))}"]
+    if post.get("reuse"):
+        out.append(f"- **Check:** this script reuses its reference's own content ({', '.join(post['reuse'])}); swap it for the creator's own.")
+    out.append("")
 
     needs = post.get("needs_from_you") or []
     if needs:
@@ -205,6 +208,8 @@ def post_markdown(post, rates, sources, refs=None, level=1, cards=None):
                 out.append(f"- **On screen:** {t(shot['on_screen_text'])}")
             for rt in shot.get("reference_text") or []:
                 out.append(f"- **Text style (match the reference exactly; it said “{rt['text']}”):** {rt['spec']}")
+            if shot.get("text_check"):
+                out.append(f"- **Check the text:** {'; '.join(shot['text_check'])}")
             out += _sealcam(shot, t)
             if shot.get("reference"):
                 out.append(f"- **Borrowed from:** {t(shot['reference'])}")

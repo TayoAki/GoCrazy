@@ -12,7 +12,7 @@ from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, timedelta
 
-from . import db, llm, teardown, textstyle
+from . import db, llm, madlibs as madlib_lines, teardown, textstyle
 from .ai import SEALCAM, SEALCAM_KEYS
 from .annotate import BEATS, VOCAB
 
@@ -312,20 +312,89 @@ def source_madlibs(shortcodes, model):
     return out, cost
 
 
-def _reference_text(reference, refs):
-    """The measured text blocks of the scene a shot borrows from ("<id> scene <n>"), as specs a designer can match."""
+TEXT_FIX_SYSTEM = """You rewrite on-screen text for short-form videos so its format matches a reference text exactly.
+For each item keep the new words' meaning, but copy the reference's format: the same number of lines (line breaks as
+\\n), the same punctuation marks in the same places, the same symbols and spacing, emoji only where the reference has
+them, the same case. When patterns are given (madlibs: frame words kept, each {{SLOT}} a blank; " / " separates text
+blocks that show separately), the text must fill one block of one pattern, or a run of its blocks in order: no extra
+words. Fill the blanks with THIS POST's content (its script is given), never with the reference's own numbers, names or
+places; for a fact the script doesn't have, write a [[placeholder]].
+Reply with ONLY a JSON object: {"texts": [{"i": int, "text": str}]}"""
+
+
+def _text_check(sh, refs, patterns, content=None):
+    """textstyle.check, plus: the text must fit one of the reference's on-screen madlib patterns, and mustn't reuse
+    the reference's own content."""
+    blocks = _reference_blocks(sh.get("reference"), refs)
+    text, issues = textstyle.check(sh.get("on_screen_text"), blocks)
+    ref_id = str(sh.get("reference") or "").split(" ")[0]
+    if text and content and (hits := madlib_lines.copies(text, content.get(ref_id, set()))):
+        issues.append(f"reuses the reference's own content ({', '.join(hits)})")
+    mine = [t for t in patterns.get(ref_id) or [] if t]
+    if text and mine and not any(madlib_lines.align(t, text) for t in _block_runs(mine)):
+        issues.append("doesn't follow the reference's on-screen pattern" + ("s" if len(mine) > 1 else "")
+                      + " " + " or ".join(f"“{t}”" for t in mine[:3]) + (" …" if len(mine) > 3 else ""))
+    return text, issues, blocks, mine
+
+
+def _block_runs(templates):
+    """An on-screen madlib joins the blocks that show together with " / ". A shot's text may fill one block or a run
+    of them in order, so each run is a pattern of its own."""
+    out = []
+    for t in templates:
+        blocks = [b.strip() for b in t.split(" / ") if b.strip()]
+        out += [" ".join(blocks[i:j]) for i in range(len(blocks)) for j in range(i + 1, len(blocks) + 1)]
+    return out
+
+
+def fix_shot_text(post, refs, model, patterns=None, content=None):
+    """Make each shot's on-screen text follow its reference's: case and symbol spacing in code, then one AI pass for
+    shots whose pattern, lines, punctuation or emoji still differ. What still differs stays in shot["text_check"].
+    patterns: {reference id: [its on-screen madlib templates]}. Returns cost."""
+    patterns = patterns or {}
+    todo = []
+    for i, sh in enumerate(post.get("shots") or []):
+        sh["on_screen_text"], sh["text_check"], blocks, mine = _text_check(sh, refs, patterns, content)
+        if sh["text_check"]:
+            todo.append({"i": i, "text": sh["on_screen_text"], "reference_text": blocks[0].get("text") if blocks else None,
+                         "patterns": mine[:6] or None, "differs": sh["text_check"]})
+    if not todo:
+        return 0
+    try:
+        got, cost = llm.ask_json(TEXT_FIX_SYSTEM, [("text", "THIS POST'S SCRIPT (take the content from here):\n"
+                                                  + "\n".join(b.get("say") or "" for b in post.get("beats") or [])[:3000]
+                                                  + "\n\nTEXTS TO FIX:\n" + json.dumps(todo, ensure_ascii=False))], model, 3000, 0.2)
+    except Exception:
+        return 0  # the flags stay, so a person sees what differs
+    for item in got.get("texts") or []:
+        i = item.get("i")
+        if isinstance(i, int) and 0 <= i < len(post["shots"]) and item.get("text"):
+            sh = post["shots"][i]
+            sh["on_screen_text"] = item["text"]
+            sh["on_screen_text"], sh["text_check"], _, _ = _text_check(sh, refs, patterns, content)
+    return cost
+
+
+def _reference_blocks(reference, refs):
+    """The text blocks of the scene a shot borrows from ("<id> scene <n>")."""
     parts = str(reference or "").split()
     if len(parts) < 3 or parts[0] not in refs or not parts[-1].isdigit():
         return []
     scene = next((s for s in refs[parts[0]]["scenes"] if s.get("i") == int(parts[-1])), None)
+    return (scene or {}).get("text_blocks") or []
+
+
+def _reference_text(reference, refs):
+    """The reference scene's measured text blocks, as specs a designer can match."""
     return [{"text": b.get("text"), "spec": textstyle.describe(b), "measured": bool(b.get("measured"))}
-            for b in (scene or {}).get("text_blocks") or []]
+            for b in _reference_blocks(reference, refs)]
 
 
-def add_shots(posts, context, model):
+def add_shots(posts, context, model, about=""):
     """Fill post["shots"] for each post (in parallel). Returns the cost. A failed post gets post["shots_error"]."""
     ids = {s for p in posts for s in p.get("source_outliers") or []}
     refs = reference_scenes(ids)
+    content = source_content(ids, about)
     madlibs, _ = source_madlibs(ids, model)
     system = SHOTS_SYSTEM.format(beats=", ".join(BEATS))
 
@@ -343,6 +412,7 @@ def add_shots(posts, context, model):
                           "reference": sh.get("reference"), "kept": sh.get("kept"), "changed": sh.get("changed"),
                           "text_style": sh.get("text_style"), "reference_text": _reference_text(sh.get("reference"), refs)}
                          for sh in got.get("shots") or [] if sh.get("S")]
+        c += fix_shot_text(post, refs, model, {s: (m or {}).get("on_screen") for s, m in madlibs.items()}, content)
         post.pop("shots_error", None)
         return c
 
@@ -356,7 +426,7 @@ def add_shot_lists(plan_id):
         row = conn.execute("SELECT * FROM plans WHERE id=?", (plan_id,)).fetchone()
         project = conn.execute("SELECT * FROM projects WHERE id=?", (row["project_id"],)).fetchone()
     data, inp = json.loads(row["data"]), json.loads(row["input"])
-    cost = add_shots(data["posts"], _context(project, inp.get("about") or "", inp.get("followers")), inp["model"])
+    cost = add_shots(data["posts"], _context(project, inp.get("about") or "", inp.get("followers")), inp["model"], inp.get("about") or "")
     data["cost"] = round((data.get("cost") or 0) + cost, 4)
     with db.connect() as conn:
         conn.execute("UPDATE plans SET data=? WHERE id=?", (json.dumps(data), plan_id))
@@ -369,15 +439,47 @@ def _context(project, about, followers):
             f"Followers: {followers if followers is not None else 'unknown'}\n\n")
 
 
+def source_content(shortcodes, about=""):
+    """{teardown id: its own content words (numbers, names)}: what a post must not reuse. Words in the client's own
+    about text are theirs to use, so they're left out."""
+    if not shortcodes:
+        return {}
+    with db.connect() as conn:
+        rows = conn.execute(f"SELECT shortcode, data FROM teardowns WHERE status='done' AND shortcode IN "
+                            f"({','.join('?' * len(shortcodes))})", list(shortcodes)).fetchall()
+    out = {}
+    for r in rows:
+        d = json.loads(r["data"])
+        lines = [(d["fields"].get(k) or {}).get("value") for k in ("verbal_hook", "written_hook", "topic")]
+        lines += [d.get("caption"), (d.get("transcript") or {}).get("text")]
+        lines += [x for sc in d.get("scenes") or [] for x in (sc.get("said"), sc.get("on_screen_text"))]
+        out[r["shortcode"]] = {w for w in madlib_lines.distinctive(lines) if w not in (about or "")}
+    return out
+
+
+def _post_text(post):
+    hook = post.get("hook") or {}
+    return "\n".join(str(x) for x in [post.get("title"), post.get("topic"), hook.get("verbal"), hook.get("written"),
+                                       post.get("caption_first_line"), (post.get("cta") or {}).get("line"),
+                                       *[b.get("say") for b in post.get("beats") or []]] if x)
+
+
+def _reuse(post, content):
+    tokens = set().union(*[content.get(s, set()) for s in post.get("source_outliers") or []]) if content else set()
+    return madlib_lines.copies(_post_text(post), tokens)
+
+
 def _source_formats(post, teardowns):
     by_id = {t["id"]: t for t in teardowns}
     return [by_id[s]["format"] for s in post.get("source_outliers") or [] if s in by_id and by_id[s].get("format") not in SKIP_VALUES]
 
 
-def _outline_problems(posts, teardowns):
-    """Posts that left their sources' format (rule 6), or name no source at all."""
+def _outline_problems(posts, teardowns, content=None):
+    """Posts that left their sources' format (rule 6), name no source, or reuse a source's own content (rule 1)."""
     problems = []
     for p in posts:
+        if content and (hits := _reuse(p, content)):
+            problems.append(f"slot {p.get('slot')} reuses its source's own content ({', '.join(hits)}): keep the template, change the content")
         if not p.get("source_outliers"):
             problems.append(f"slot {p.get('slot')} names no source teardown")
         elif (formats := _source_formats(p, teardowns)) and p.get("format") not in formats:
@@ -400,7 +502,8 @@ def _generate(project_id, about, followers, start_date, posts, model, teardowns)
                     f"TEARDOWNS OF PROVEN OUTLIERS ({len(teardowns)}):\n{json.dumps(teardowns, ensure_ascii=False)}")
     outline, c = _chat_json(model, OUTLINE_SYSTEM.format(**vocab), outline_user, 0.6)
     cost += c
-    problems = _outline_problems(outline.get("posts", []), teardowns)
+    content = source_content({t["id"] for t in teardowns}, about)
+    problems = _outline_problems(outline.get("posts", []), teardowns, content)
     if problems:  # one revision pass when the model ignores rule 6
         outline, c = _chat_json(model, OUTLINE_SYSTEM.format(**vocab),
                                 outline_user + f"\n\nYOUR PREVIOUS OUTLINE:\n{json.dumps(outline, ensure_ascii=False)}\n\n"
@@ -422,21 +525,32 @@ def _generate(project_id, about, followers, start_date, posts, model, teardowns)
     # Stage 2: each post written in full from its own sources, in parallel.
     teardown_by_id = {t["id"]: t for t in teardowns}
 
-    def detail(slot):
+    def detail(slot, avoid=None):
         post = by_slot[slot["slot"]]
         sources = [teardown_by_id[s] for s in post.get("source_outliers") or [] if s in teardown_by_id] or teardowns[:3]
         templates = {s: madlibs[s] for s in post.get("source_outliers") or [] if s in madlibs}
         return _chat_json(model, DETAIL_SYSTEM.format(beats=", ".join(BEATS), **vocab),
                           context + f"SLOT: {json.dumps(slot)}\nOUTLINE: {json.dumps(post, ensure_ascii=False)}\n\n"
                           f"SOURCE TEARDOWNS:\n{json.dumps(sources, ensure_ascii=False)}\n\n"
-                          f"SOURCE MADLIBS (by teardown id):\n{json.dumps(templates, ensure_ascii=False) if templates else '(none)'}", 0.6)
+                          f"SOURCE MADLIBS (by teardown id):\n{json.dumps(templates, ensure_ascii=False) if templates else '(none)'}"
+                          + (f"\n\nYOUR LAST VERSION REUSED THE SOURCE'S OWN CONTENT ({', '.join(avoid)}). Keep the template, "
+                             "but fill it with new content: never use these words; use [[placeholders]] for facts you don't have." if avoid else ""), 0.6)
 
     with ThreadPoolExecutor(max_workers=4) as pool:
         details = list(pool.map(detail, slots))
     result = {"posts": []}
     for slot, (d, c) in zip(slots, details):
         cost += c
-        result["posts"].append({**by_slot[slot["slot"]], **d})
+        post = {**by_slot[slot["slot"]], **d}
+        if hits := _reuse(post, content):  # one rewrite; whatever is still reused is flagged on the post
+            try:
+                d2, c2 = detail(slot, hits)
+                cost += c2
+                post = {**by_slot[slot["slot"]], **d2}
+            except Exception:
+                pass
+        post["reuse"] = _reuse(post, content)
+        result["posts"].append(post)
 
     known = {t["id"] for t in teardowns}
     start = date.fromisoformat(start_date) if start_date else date.today() + timedelta(days=1)
@@ -453,7 +567,7 @@ def _generate(project_id, about, followers, start_date, posts, model, teardowns)
         raise RuntimeError(f"The model returned {len(planned)} of {len(slots)} posts")
 
     # Stage 3: a SEALCaM shot list for each post, from its script and its sources' scene breakdowns.
-    cost += add_shots(planned, context, model)
+    cost += add_shots(planned, context, model, about)
     mix = Counter(p["format"] for p in planned)
     return {"posts": planned, "rates": rates, "teardowns_used": len(teardowns), "tier": tier(followers),
             "model": model, "cost": round(cost, 4), "format_mix": mix.most_common(),

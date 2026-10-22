@@ -9,12 +9,25 @@ with the odds of each post going viral.
 ```bash
 pip install -r requirements.txt
 echo "SCRAPECREATORS_API_KEY=your_key" >> .env     # or export it; .env is gitignored
-echo "OPENROUTER_API_KEY=your_key" >> .env         # optional: AI teardowns and week plans
 python -m research_app                             # then open http://127.0.0.1:8000
 ```
 
 You also need **ffmpeg** for hook frames and cut counts (`brew install ffmpeg` / `apt install ffmpeg`). Without it, everything
 else still works. Data lives in `data/` (SQLite database, covers, frames), which is gitignored.
+
+### The AI provider
+
+AI teardowns, scene breakdowns, madlibs and week plans need one of:
+
+| Provider | How | Cost |
+|---|---|---|
+| **Claude Code** (default when installed) | The `claude` command on this machine, logged in to your Claude plan | Your plan's usage, no per-call charge |
+| **OpenRouter** | `OPENROUTER_API_KEY` in `.env`; the model is the project's AI model setting | Per call (shown in the app) |
+
+With Claude Code, each request runs `claude -p` from an empty folder with no project settings, hooks or MCP servers, no
+saved session, and only its Read tool, allowed only on the media folder (that's how it looks at the frames). Set
+`AI_PROVIDER=openrouter` or `AI_PROVIDER=claude-code` to force one, and `CLAUDE_CODE_AI_MODEL` to pick Claude Code's model.
+The bottom bar shows which one is in use.
 
 ## How the research works
 
@@ -38,8 +51,8 @@ Select an outlier and press **Tear down** (about 2 credits). The app fetches the
 pulls 6 frames from the first 3 seconds, about 15 frames across the whole video and one or two frames from every scene,
 finds the hard cuts, then **deletes the video** (frames stay on your machine for review only).
 
-With an OpenRouter key, an AI pass then fills the fields that need eyes (written and visual hook, angle, delivery,
-format, beats, takeaway) from the frames, transcript, caption and Instagram's audio facts. It costs about 2 cents per reel
+With an AI provider, an AI pass then fills the fields that need eyes (written and visual hook, angle, delivery,
+format, beats, takeaway) from the frames, transcript, caption and Instagram's audio facts. On OpenRouter it costs about 2 cents per reel
 with the default model, and you can re-run it on its own from the teardown page. It never overwrites a field you edited.
 
 Every field on the card shows where its value came from:
@@ -70,8 +83,33 @@ speaker changing sides rarely registers as a cut). For every scene the AI writes
 | Ca | Camera | camera type, lens and focal length, framing and angle, camera motion |
 | M | Metatokens | realism, texture and grain, motion cadence, capture quality, platform cues |
 
-plus the scene's beat, its on-screen text and the words spoken during it. It costs 1–9 cents per reel. Teardowns made
-before this existed get a **Break down scenes** button (it fetches the video again; the post lookup is cached).
+plus the scene's beat, its on-screen text and the words spoken during it. On OpenRouter it costs 1–9 cents per reel.
+Teardowns made before this existed get a **Break down scenes** button (it fetches the video again; the post lookup is cached).
+
+**On-screen text, measured.** For each block of text in a scene the AI gives the exact words (case, punctuation and emoji
+as shown), where the block sits, a look-alike font, weight, case, letter colour, highlighted words, outline, shadow,
+background box, alignment and animation. The app then measures the frame's pixels inside that box: the letters' actual
+colour, the number of lines, the line height (as % of the frame and as pixels on a 1080×1920 reel) and the block's
+position. A brief can then say "2 lines, each 3.1% of the frame height (≈60 px), white (measured #F6F1ED), from 18% to 26%
+down the frame" instead of "big white text".
+
+## Madlibs
+
+**Make madlib** on a teardown turns the reel's words into a fill-in-the-blank template (playbook Phase 4): the hooks,
+every spoken line, every on-screen text and the caption, with the frame words kept and each blank a named, typed slot
+(`{{PRODUCT:ITEM}}`, `{{N:NUMBER}}`) with a rule for filling it. Lists become `[REPEAT {{N:NUMBER}} times]…[/REPEAT]`.
+
+The app lines each template up against the reel's own words, so the teardown shows **the original variables** (what the
+creator put in each blank) next to an editor for **your version**: change a value and every line that uses it is
+rewritten. Plans fill these same madlibs, so a planned post keeps the reference's structure with new content.
+
+## Doubled down
+
+An outlier is one reel that beat its creator's follower count. A **doubled-down** account found a template and keeps
+posting it: the same caption headline (e.g. "Colour combinations…") in at least 4 of their scanned reels, whose typical
+reel reaches at least 10% of their followers, and that is either a habit (20% or more of their reels) or a proven winner
+(its typical reel beats the follower count). The **Doubled down** tab lists them with their template's reels; any of
+those reels can be added as an outlier for a teardown.
 
 ## Week plan and odds of virality
 
@@ -80,13 +118,26 @@ and a start date, and press **Plan my week** (needs at least 3 teardowns; about 
 of it the shot lists).
 
 1. The week's shape comes from the playbook: the funnel slots (TOFU / MOFU / BOFU) and CTA types for the client's follower tier.
-2. The AI outlines 7 posts, each borrowing the **structure** of named outliers (hook pattern, format, angle, beats), never
-   their content, and never using the same format or angle more than twice.
+2. The AI outlines 7 posts, each copying the **template** of named outliers (format, set, visuals, hook pattern, beats),
+   never their content, and never using the same format or angle more than twice. A post must keep its sources' format;
+   the code checks this and fixes it if the AI drifts.
 3. Each post is then written out in full: hook (spoken, on-screen and visual), beat-by-beat script, CTA, caption,
-   what to film, and what the client still needs to supply. Anything the client must fill in shows as a `[[placeholder]]`,
-   never an invented fact.
-4. Each post gets a **shot list** in SEALCaM, one shot per setup or cut. Each shot borrows the framing, movement,
-   lighting and pace of a named scene in the source outliers' breakdowns, with the client's own subject and setting.
+   what to film, and what the client still needs to supply. The script fills the source outlier's madlib. Anything the
+   client must fill in shows as a `[[placeholder]]`, never an invented fact.
+4. Each post gets a **shot list** in SEALCaM, one shot per setup or cut. Each shot recreates a named scene of the source
+   outliers (same set, framing, movement, lighting and pace) and says what it keeps and what it changes. Its on-screen
+   text copies the reference's text style (font, case, colours, measured size and position).
+
+**Checks in code** after the AI writes:
+
+- **No copying.** The reference's own specific content (numbers of 3+ digits and names: capitalised words it never
+  writes in lowercase, outside headlines) is collected per outlier. A post that reuses any of those numbers, or two or more
+  of its names, is rewritten once with those words banned; if it still reuses them it's flagged. Words from the client's
+  own description don't count.
+- **Same text format.** Each shot's on-screen text gets the reference's case and the spacing around symbols such as `+`.
+  Then it must fit the reference's on-screen madlib (one text block or a run of them), and its line count, punctuation
+  and emoji must match the reference. Shots that differ get one AI fix pass; anything still different is flagged on the
+  shot ("Check the text").
 
 The **odds** are computed in code, not guessed by the AI:
 
@@ -107,17 +158,20 @@ The research ends at a brief that anything downstream can take: a human editor, 
 
 - **The idea:** topic, angle, hook pattern, odds, why it should work, the outliers it borrows from (with links), the risk
 - **Before you film:** every `[[placeholder]]` to replace with real facts
-- **Script:** the hook (say, on screen, show) and each beat (say, film, edit), the call to action, caption and hashtags
-- **Shot list (SEALCaM):** one entry per shot, with the words said during it
+- **Script:** the hook (say, on screen, show) and each beat (say, film, edit), with the madlib line each one fills, the
+  call to action, caption and hashtags
+- **Shot list (SEALCaM):** one entry per shot, with the words said during it, the reference scene it recreates, what it
+  keeps and changes, and the exact text spec to match
 - **Teleprompter:** just the words, in order
-- **Reference breakdown:** each source outlier scene by scene in SEALCaM
+- **Reference breakdown:** each source outlier's card, its madlib with a table of its original variables (and a column for
+  yours), and every scene in SEALCaM with its measured text
 
 Also available at `GET /api/plans/{id}/export.md` (the week) and `?post=N` (one post).
 
 ## Screen layout
 
 Built from the wireframe: left rail (Home, Research, Activity, Bank, Settings) · sidebar (New research + projects) ·
-tabs (Outliers / Creators / Teardowns / Plan) · main content (outlier grid, full-page teardown, week plan) · right sidebar
+tabs (Outliers / Doubled down / Creators / Teardowns / Plan) · main content (outlier grid, full-page teardown, week plan) · right sidebar
 (context for the current view: patterns, the selected outlier, or the plan's method) · bottom bar (API status, credits,
 live progress).
 
@@ -134,7 +188,9 @@ The full app runs on Railway (long research runs, ffmpeg, SQLite) from the `Dock
 1. New project → deploy this GitHub repo. Railway builds the Dockerfile.
 2. Add a **volume** mounted at `/data`. The app keeps its database and frames there (it reads `RAILWAY_VOLUME_MOUNT_PATH`,
    or `DATA_DIR`).
-3. Set variables: `SCRAPECREATORS_API_KEY`, `OPENROUTER_API_KEY`, and `APP_PASSWORD`. Every page and API call then
+3. Set variables: `SCRAPECREATORS_API_KEY`, `OPENROUTER_API_KEY`, and `APP_PASSWORD`. The image doesn't include
+   Claude Code, so the deployed copy uses OpenRouter. (To use your Claude plan there instead, the image would need the
+   `claude` CLI and a `CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token`.) Every page and API call then
    needs that password (the browser asks; any username). On Railway the app refuses to run without one, because an open
    copy could spend your credits.
 4. Healthcheck path `/api/health`, then generate a domain.
