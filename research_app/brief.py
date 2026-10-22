@@ -7,7 +7,7 @@ import json
 import re
 from datetime import date
 
-from . import db, madlibs
+from . import db, madlibs, textstyle
 from .ai import SEALCAM_KEYS
 from .planner import reference_scenes
 
@@ -203,6 +203,8 @@ def post_markdown(post, rates, sources, refs=None, level=1, cards=None):
                 out.append(f"- **Say:** “{t(shot['say'])}”")
             if shot.get("on_screen_text"):
                 out.append(f"- **On screen:** {t(shot['on_screen_text'])}")
+            for rt in shot.get("reference_text") or []:
+                out.append(f"- **Text style (match the reference exactly; it said “{rt['text']}”):** {rt['spec']}")
             out += _sealcam(shot, t)
             if shot.get("reference"):
                 out.append(f"- **Borrowed from:** {t(shot['reference'])}")
@@ -237,6 +239,8 @@ def reference_markdown(src, ref, level=1, card=None):
             out.append(f"- **Said:** “{sc['said']}”")
         if sc.get("on_screen_text"):
             out.append(f"- **On screen:** {sc['on_screen_text']}")
+        for b in sc.get("text_blocks") or []:
+            out.append(f"- **Text “{b.get('text')}”:** {textstyle.describe(b)}")
         out += _sealcam(sc, lambda x: x) + [""]
     return out
 

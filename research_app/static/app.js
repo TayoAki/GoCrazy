@@ -573,6 +573,7 @@ function teardownPage() {
           <div class="scene-h"><b>Scene ${sc.i}</b><span class="tc">${sc.start.toFixed(1)}–${sc.end.toFixed(1)} s</span>${sc.beat ? `<span class="beat ${esc(sc.beat)}">${esc(sc.beat)}</span>` : ""}
             <span class="xs faint">${sc.cut === false ? "same shot continues" : "hard cut"}${sc.flash_cuts ? ` · ${sc.flash_cuts} flash cut${sc.flash_cuts === 1 ? "" : "s"}` : ""}</span></div>
           ${sc.said ? `<p class="say">“${esc(sc.said)}”</p>` : ""}${sc.on_screen_text ? `<p class="small"><b>On screen:</b> ${esc(sc.on_screen_text)}</p>` : ""}
+          ${(sc.text_blocks || []).map((b) => `<p class="small text-spec"><b>Text “${esc(b.text)}”:</b> ${esc(textSpec(b))}</p>`).join("")}
           ${sealcamRows(sc)}</div></li>`).join("")}</ol>`
       : `<p class="muted">Not broken down yet. This fetches the video again (the post lookup is cached) and describes every scene in SEALCaM${S.status.openrouter ? ", for a few cents" : ""}.</p>`}</section>`;
   const tools = STATIC ? "" : `<div class="toolbar" style="margin:0">
@@ -694,6 +695,21 @@ function planForm(teardowns) {
     </form>`;
 }
 
+// A text block's style in one line: the same wording as textstyle.describe() in the brief.
+function textSpec(b) {
+  const m = b.measured || {};
+  const named = (hex) => { const v = String(hex || "").replace("#", ""); const c = [0, 2, 4].map((i) => parseInt(v.slice(i, i + 2), 16));
+    return c.some(isNaN) ? hex : Math.min(...c) >= 225 ? `white (measured ${hex})` : Math.max(...c) <= 35 ? `black (measured ${hex})` : hex; };
+  const kase = { upper: "ALL CAPS", lower: "all lowercase", title: "Title Case", sentence: "Sentence case" }[b.case] || b.case;
+  const bits = [b.font || b.family, b.weight, kase, b.italic ? "italic" : null, (m.fill || b.fill) ? `letters ${named(m.fill || b.fill)}` : null,
+    ...(b.highlight || []).map((h) => `“${h.words}” in ${h.color}`), b.stroke ? `${b.stroke} outline` : null, b.shadow ? "drop shadow" : null,
+    b.background?.color ? `on a ${b.background.shape || "box"} of ${b.background.color}` : null,
+    m.lines ? `${m.lines} line${m.lines === 1 ? "" : "s"}, each ${m.line_height_pct}% of the frame height (≈${m.line_height_px} px on 1080×1920)` : null,
+    m.lines ? `from ${m.top_pct}% to ${m.bottom_pct}% down the frame, ${m.left_pct}–${m.right_pct}% across` : b.box ? `about ${Math.round(b.box[1])}–${Math.round(b.box[3])}% down the frame (size not measured)` : null,
+    b.align ? `${b.align}-aligned` : null, b.animation && b.animation !== "static" ? b.animation : null];
+  return bits.filter(Boolean).join(", ");
+}
+
 // A madlib line: frame words as written, {{SLOTS}} highlighted.
 const madlibLine = (tpl) => tpl ? `<div class="madlib">${esc(tpl).replace(/\{\{([A-Z0-9_]+)(?::[A-Z_]+)?\}\}/g, '<span class="slot">$1</span>')}</div>` : "";
 
@@ -744,6 +760,7 @@ function planDay(p, i, rates, planId) {
           <div class="scene-h"><b>Shot ${k + 1}</b>${sh.beat ? `<span class="beat ${esc(sh.beat)}">${esc(sh.beat)}</span>` : ""}${sh.duration_s ? `<span class="tc">about ${sh.duration_s} s</span>` : ""}
             ${sh.reference ? shotRef(sh.reference) : ""}</div>
           ${sh.say ? `<p class="say">“${fills(sh.say)}”</p>` : ""}${sh.on_screen_text ? `<p class="small"><b>On screen:</b> ${fills(sh.on_screen_text)}</p>` : ""}
+          ${(sh.reference_text || []).map((rt) => `<p class="small text-spec"><b>Text style</b> (match the reference, which said “${esc(rt.text)}”): ${esc(rt.spec)}</p>`).join("")}
           ${sealcamRows(sh, fills)}
           ${sh.kept || sh.changed ? `<p class="small muted">${sh.kept ? `<b>Kept:</b> ${fills(sh.kept)}` : ""}${sh.kept && sh.changed ? " · " : ""}${sh.changed ? `<b>Changed:</b> ${fills(sh.changed)}` : ""}</p>` : ""}</li>`).join("")}</ol></section>` : p.shots_error ? `<div class="notice">${ICON.alert}<div>The shot list failed: ${esc(p.shots_error)}</div></div>` : ""}
       <section class="sec"><div class="sec-h"><h2>Close and post</h2></div>

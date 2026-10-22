@@ -12,7 +12,7 @@ from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, timedelta
 
-from . import db, llm, teardown
+from . import db, llm, teardown, textstyle
 from .ai import SEALCAM, SEALCAM_KEYS
 from .annotate import BEATS, VOCAB
 
@@ -112,13 +112,19 @@ Rules for the shot list:
 6. Write each SEALCaM field as an explicit instruction for setting the shot up, in the terms above. SEALCaM is visual
    only: no sound, music or voice in any field.
 7. say: the exact script words spoken during this shot (split a beat's line across its shots), or null.
-   on_screen_text: the text to burn in, or null; fill the reference's on_screen_madlib, keeping its frame words.
+   on_screen_text: the text to burn in, or null; fill the reference's on_screen_madlib, keeping its frame words,
+   punctuation, emoji, case and line breaks exactly as the reference scene's text_blocks show them.
+9. On-screen text looks exactly like the reference scene's text_blocks: the same font, weight, case, colours (fill,
+   highlighted words, outline, background box), size (measured line height), position, alignment, line count and
+   animation. Only the words change. text_style: copy the text block(s) of the reference scene you used, with "text"
+   set to this shot's words.
    reference: the scene it borrows from, as "<id> scene <n>", or null.
-8. Beat labels: {beats}.
+10. Beat labels: {beats}.
 
 Reply with ONLY a JSON object: {{"shots": [{{"beat": str, "duration_s": number, "say": str|null,
  "on_screen_text": str|null, "S": str, "E": str, "A": str, "L": str, "Ca": str, "M": str, "reference": str|null,
- "kept": str, "changed": str}}]}}"""
+ "kept": str, "changed": str, "text_style": [{{"text": str, "font": str, "weight": str, "case": str, "fill": str,
+ "highlight": list, "stroke": str|null, "background": object|null, "align": str}}]}}]}}"""
 
 _running = set()
 
@@ -267,7 +273,7 @@ def reference_scenes(shortcodes):
     out = {}
     for r in rows:
         data = json.loads(r["data"])
-        scenes = [{k: sc.get(k) for k in ("i", "start", "end", "cut", "flash_cuts", "beat", "said", "on_screen_text", *SEALCAM_KEYS)}
+        scenes = [{k: sc.get(k) for k in ("i", "start", "end", "cut", "flash_cuts", "beat", "said", "on_screen_text", "text_blocks", *SEALCAM_KEYS)}
                   for sc in data.get("scenes") or [] if sc.get("S")]
         if scenes:
             out[r["shortcode"]] = {"creator": "@" + data["username"], "scenes": scenes}
@@ -306,6 +312,16 @@ def source_madlibs(shortcodes, model):
     return out, cost
 
 
+def _reference_text(reference, refs):
+    """The measured text blocks of the scene a shot borrows from ("<id> scene <n>"), as specs a designer can match."""
+    parts = str(reference or "").split()
+    if len(parts) < 3 or parts[0] not in refs or not parts[-1].isdigit():
+        return []
+    scene = next((s for s in refs[parts[0]]["scenes"] if s.get("i") == int(parts[-1])), None)
+    return [{"text": b.get("text"), "spec": textstyle.describe(b), "measured": bool(b.get("measured"))}
+            for b in (scene or {}).get("text_blocks") or []]
+
+
 def add_shots(posts, context, model):
     """Fill post["shots"] for each post (in parallel). Returns the cost. A failed post gets post["shots_error"]."""
     ids = {s for p in posts for s in p.get("source_outliers") or []}
@@ -324,7 +340,8 @@ def add_shots(posts, context, model):
             post["shots_error"] = str(e)
             return 0
         post["shots"] = [{**{k: sh.get(k) for k in ("beat", "duration_s", "say", "on_screen_text", *SEALCAM_KEYS)},
-                          "reference": sh.get("reference"), "kept": sh.get("kept"), "changed": sh.get("changed")}
+                          "reference": sh.get("reference"), "kept": sh.get("kept"), "changed": sh.get("changed"),
+                          "text_style": sh.get("text_style"), "reference_text": _reference_text(sh.get("reference"), refs)}
                          for sh in got.get("shots") or [] if sh.get("S")]
         post.pop("shots_error", None)
         return c

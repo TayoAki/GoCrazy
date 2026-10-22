@@ -197,10 +197,21 @@ Rules:
   then the closest equivalent (e.g. "smartphone, reads like a mirrorless camera with a 24mm-equivalent wide lens").
   For screen recordings or pure graphics, write "screen capture" or "motion graphic" and skip the lens.
 - on_screen_text: the text burned into the frame, exactly as written, or null.
+- text_blocks: every separate piece of on-screen text in the scene's first frame, so it can be reproduced exactly.
+  text: the exact characters, including case, punctuation, emoji and line breaks (\n). box: [x0, y0, x1, y1] tightly
+  around the letters, in % of the frame width and height. font: the closest well-known font (e.g. "Montserrat
+  ExtraBold", "Proxima Nova Bold", "Instagram Classic", "Typewriter", "Bodoni"). family: sans, serif, script, mono or
+  display. weight: regular, medium, bold or black. case: upper, lower, title, sentence or mixed. fill: the letters'
+  main colour as hex. highlight: words set in another colour, with that colour. stroke: outline colour as hex, or
+  null. shadow: true/false. background: {"color": hex, "opacity": 0-1, "shape": "box"|"rounded"|"pill"} behind the
+  letters, or null. align: left, center or right. animation: static, word-by-word, pop, typewriter or other.
 - beat: the scene's job in the script, one of: """ + ", ".join(BEATS) + """.
 
 Reply with ONLY a JSON object: {"scenes": [{"i": int, "beat": str, "on_screen_text": str|null,
- "S": str, "E": str, "A": str, "L": str, "Ca": str, "M": str}]}"""
+ "S": str, "E": str, "A": str, "L": str, "Ca": str, "M": str,
+ "text_blocks": [{"text": str, "box": [x0, y0, x1, y1], "font": str, "family": str, "weight": str, "case": str,
+   "italic": bool, "fill": str, "highlight": [{"words": str, "color": str}], "stroke": str|null, "shadow": bool,
+   "background": {"color": str, "opacity": number, "shape": str}|null, "align": str, "animation": str}]}]}"""
 
 SEALCAM_KEYS = ["S", "E", "A", "L", "Ca", "M"]
 

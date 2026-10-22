@@ -4,7 +4,7 @@ import json
 import re
 import threading
 
-from . import ai, annotate, db, llm, media
+from . import ai, annotate, db, llm, media, textstyle
 from .annotate import field
 from .config import MEDIA, has_ffmpeg, scrapecreators_key
 from .scrapecreators import ScrapeCreators, ScrapeError
@@ -52,6 +52,17 @@ def apply_scenes(data, model):
         sc["beat"] = got.get("beat") if got.get("beat") in annotate.BEATS else None
         sc["on_screen_text"] = got.get("on_screen_text")
         sc.update({k: got.get(k) for k in ai.SEALCAM_KEYS})
+        # Text blocks as the model read them, then size, position and colour measured from the scene's first frame.
+        frame = MEDIA / data["shortcode"] / sc["frames"][0].rsplit("/", 1)[-1] if sc.get("frames") else None
+        sc["text_blocks"] = []
+        for block in got.get("text_blocks") or []:
+            if not isinstance(block, dict) or not block.get("text"):
+                continue
+            try:
+                block["measured"] = textstyle.measure(frame, block.get("box"), block.get("fill")) if frame and frame.exists() else None
+            except Exception:  # a bad box or colour from the model: keep its description, without measurements
+                block["measured"] = None
+            sc["text_blocks"].append(block)
     data["notes"] = [n for n in data.get("notes") or [] if not n.startswith("Scene breakdown failed")]
     data["scenes_ai"] = {"model": llm.label(model), "cost": usage.get("cost"), "tokens": usage.get("total_tokens"),
                          "missing": [sc["i"] for sc in data["scenes"] if not sc.get("S")]}
