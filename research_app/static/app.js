@@ -608,7 +608,7 @@ function planTab() {
   const picker = `<div class="toolbar">
       ${S.plans.length > 1 ? `<select data-control="plan" aria-label="Choose a plan">${S.plans.map((x) => `<option value="${x.id}" ${x.id === plan.id ? "selected" : ""}>Plan #${x.id} · ${ago(x.created_at)} · ${esc(x.status)}</option>`).join("")}</select>` : ""}
       <span class="spacer"></span>
-      ${plan.export ? `<button class="btn sm" data-action="copy-week">${ICON.copy} Copy week</button>${STATIC ? "" : `<a class="btn sm" href="/api/plans/${plan.id}/export.md" download>${ICON.download} Export week</a>`}` : ""}
+      ${plan.export ? `${plan.export.week ? `<button class="btn sm" data-action="copy-week">${ICON.copy} Copy week</button>` : ""}${STATIC ? "" : `<a class="btn sm" href="/api/plans/${plan.id}/export.md" download>${ICON.download} Export week</a>`}` : ""}
       ${STATIC ? "" : `<button class="btn sm quiet" data-action="delete-plan">${ICON.trash} Delete</button><button class="btn sm" data-action="new-plan">${ICON.calendar} New plan</button>`}</div>`;
   if (plan.status === "running") return picker + `<div class="page-head"><h1>Planning your week…</h1><p>The AI is adapting proven structures from your teardowns, then writing a shot list for each post. Usually 3–4 minutes.</p></div>
     <div class="week" aria-hidden="true">${"<div class='skel block' style='height:76px'></div>".repeat(plan.input?.posts || 7)}</div>`;
