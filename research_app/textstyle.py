@@ -139,7 +139,8 @@ def check(text, reference_blocks):
             tight_ref, tight_new = f" {sym} " not in model, f" {sym} " not in text
             if tight_ref != tight_new:
                 issues.append(f"“{sym}” {'with' if tight_ref else 'without'} spaces around it; the reference has it {'tight' if tight_ref else 'spaced'}")
-    punct = lambda s: {c for c in s if c in ".,!?…:;\"'()-–—"}
+    # Marks inside a word or number ("you're", "fly-thru", "69,000") belong to the words, and a [[placeholder]] has none yet.
+    punct = lambda s: {c for c in re.sub(r"\[\[.*?\]\]|(?<=\w)[,.'’-](?=\w)", "", s) if c in ".,!?…:;\"'’()-–—"}
     if punct(model) != punct(text):
         extra, missing = sorted(punct(text) - punct(model)), sorted(punct(model) - punct(text))
         issues.append("punctuation differs" + (f": adds {' '.join(extra)}" if extra else "") + (f"; drops {' '.join(missing)}" if missing else ""))

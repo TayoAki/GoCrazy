@@ -30,7 +30,9 @@ def _frame(text, first, last, end_ok):
         return sep
     if has_punct:
         return rf"(?:\s*[{PUNCT}]+\s*|\s*$)" if last and end_ok else rf"\s*[{PUNCT}]+\s*"
-    return r"\s*" if last else r"\s+"
+    if last:
+        return r"\s*"
+    return r"[ \t]*\n\s*" if "\n" in text else r"\s+"  # a line break between two blanks must be a line break
 
 
 def _pattern(template, end_ok=True):
@@ -87,7 +89,9 @@ def align(template, text):
             count = len(m.groups()) // len(names)
             uses += [(n, _clean(v)) for n, v in zip(names * count, m.groups())]
             continue
-        if sum(len(m.group(0)) for m in found) < len(value.strip()) * 0.8:
+        # Blanks only: each repeat runs to a line break, punctuation, a slash or the end, so its last blank can't stop short.
+        found = list(re.finditer(r"[\s/|•]*" + inner + rf"(?:(?<=[\n/|•{PUNCT}])|(?<=[\n/|•{PUNCT}]\s)|(?=\s*$|\s*\n|\s*[/|•{PUNCT}]))", value.strip(), re.I | re.S))
+        if not found or sum(len(m.group(0)) for m in found) < len(value.strip()) * 0.8:
             return None
         count = len(found)
         for m in found:
