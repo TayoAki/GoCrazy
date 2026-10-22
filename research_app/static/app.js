@@ -734,6 +734,11 @@ function settingsView() {
       <div><span class="k">ffmpeg</span><span class="v">${st.ffmpeg ? "Installed" : "Missing"}</span></div></div></div>
     <p class="small muted" style="margin:12px 0">Keys come from environment variables or the repo's .env file (SCRAPECREATORS_API_KEY, OPENROUTER_API_KEY). They are never shown or sent to the browser.</p>
     ${STATIC ? "" : `<button class="btn sm" data-action="refresh-balance">${ICON.refresh} Refresh balance</button>`}
+    ${STATIC ? "" : `<h2 class="section-gap" style="margin-bottom:8px">Backup</h2>
+    <p class="small muted" style="margin:0 0 12px">Everything in one file: all projects, outliers, teardowns, plans and frames. Use it to move your research to another machine or a server.</p>
+    <div class="toolbar"><a class="btn sm" href="/api/backup" download>${ICON.download} Download backup</a>
+      <label class="btn sm quiet" for="restore-file">${ICON.refresh} Restore from a backup…</label>
+      <input type="file" id="restore-file" accept=".gz,.tgz,application/gzip" hidden></div>`}
     ${p && !STATIC ? `<h2 class="section-gap" style="margin-bottom:16px">${esc(p.name)}</h2>
     <form id="settings-form" class="form">
       <label class="field"><span>Name</span><input type="text" name="name" value="${esc(p.name)}"></label>
@@ -875,8 +880,26 @@ document.addEventListener("click", async (ev) => {
   }
 });
 
+// Restore uploads the backup in 8 MB parts, so a proxy's request size limit can't get in the way.
+async function restoreBackup(file) {
+  if (!confirm(`Replace ALL data here with "${file.name}"? Projects, outliers, teardowns and plans on this copy are overwritten.`)) return;
+  const size = 8 * 1024 * 1024, parts = Math.max(1, Math.ceil(file.size / size));
+  const upload = Math.random().toString(36).slice(2, 12) + Date.now().toString(36);
+  try {
+    for (let i = 0; i < parts; i++) {
+      toast(`Uploading backup… ${Math.round((i / parts) * 100)}%`);
+      const res = await fetch(`/api/restore?upload=${upload}&part=${i}&parts=${parts}`, { method: "POST", body: file.slice(i * size, (i + 1) * size) });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || `Restore failed (${res.status})`);
+      if (data.restored) toast(`Restored ${data.restored.projects} projects, ${data.restored.outliers} outliers, ${data.restored.teardowns} teardowns`);
+    }
+    S.projectId = null; await loadProjects(); await loadProjectData(); render();
+  } catch (e) { toast(e.message); }
+}
+
 document.addEventListener("change", async (ev) => {
   const t = ev.target;
+  if (t.id === "restore-file" && t.files[0]) { await restoreBackup(t.files[0]); t.value = ""; return; }
   if (t.dataset.control === "filter" || t.dataset.control === "sort") {
     S[t.dataset.control] = t.value;
     await loadProjectData();

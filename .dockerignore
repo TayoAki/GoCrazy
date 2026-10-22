@@ -1,0 +1,10 @@
+.git
+.env
+data/
+site/
+briefs/
+transcripts/
+work/
+RECIPE_BOOK.md
+**/__pycache__
+*.pyc

@@ -1,18 +1,23 @@
+import base64
 import json
+import os
 import re
+import secrets
+import shutil
 import statistics
 import time
 from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, Response
+from starlette.background import BackgroundTask
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import annotate, brief, config, db, pipeline, planner, teardown
-from .config import DEFAULT_SETTINGS, MEDIA
+from . import annotate, backup, brief, config, db, pipeline, planner, teardown
+from .config import DATA, DEFAULT_SETTINGS, MEDIA
 from .scrapecreators import ScrapeCreators, ScrapeError
 
 config.load_env()
@@ -21,6 +26,36 @@ MEDIA.mkdir(parents=True, exist_ok=True)
 STATIC = Path(__file__).parent / "static"
 
 app = FastAPI(title="Outlier Research")
+APP_PASSWORD = os.environ.get("APP_PASSWORD") or None
+DEPLOYED = bool(os.environ.get("RAILWAY_ENVIRONMENT"))
+
+
+@app.middleware("http")
+async def require_password(request: Request, call_next):
+    """With APP_PASSWORD set, every page and API call needs it (browser sign-in box; any username)."""
+    if request.url.path == "/api/health":
+        return await call_next(request)
+    if APP_PASSWORD:
+        if not _password_ok(request.headers.get("authorization", "")):
+            return Response("Password required", status_code=401, headers={"WWW-Authenticate": 'Basic realm="Outlier Research"'})
+    elif DEPLOYED:  # never serve a deployed copy without a password: it can spend your API credits
+        return Response("Set the APP_PASSWORD variable on this service to use the app.", status_code=503)
+    return await call_next(request)
+
+
+def _password_ok(header):
+    if not header.startswith("Basic "):
+        return False
+    try:
+        given = base64.b64decode(header[6:], validate=True).decode().partition(":")[2]
+    except ValueError:  # bad base64 or bad UTF-8
+        return False
+    return secrets.compare_digest(given.encode(), APP_PASSWORD.encode())
+
+
+@app.get("/api/health")
+def health():
+    return {"ok": True}
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
 app.mount("/media", StaticFiles(directory=MEDIA), name="media")
 
@@ -393,6 +428,36 @@ def delete_plan(plan_id: int):
     with db.connect() as conn:
         conn.execute("DELETE FROM plans WHERE id=?", (plan_id,))
     return {"ok": True}
+
+
+@app.get("/api/backup")
+def download_backup():
+    """The database and media as one .tar.gz, to move your research to another machine."""
+    folder, archive = backup.make_backup()
+    return FileResponse(archive, media_type="application/gzip", filename=archive.name,
+                        background=BackgroundTask(shutil.rmtree, folder, ignore_errors=True))
+
+
+@app.post("/api/restore")
+async def restore_backup(request: Request, upload: str, part: int = 0, parts: int = 1):
+    """Replace all data with a backup, sent as raw bytes in one or more parts (in order) so no proxy limit gets in the way."""
+    if not re.fullmatch(r"[A-Za-z0-9_-]{6,40}", upload) or not 0 <= part < parts <= 10000:
+        raise HTTPException(400, "Bad upload id or part number")
+    staging = DATA / f"_upload_{upload}.tar.gz"
+    with open(staging, "wb" if part == 0 else "ab") as f:
+        async for chunk in request.stream():
+            f.write(chunk)
+    if part < parts - 1:
+        return {"received": part + 1, "of": parts}
+    try:
+        counts = backup.restore(staging)
+    except (RuntimeError, OSError, ValueError) as e:
+        raise HTTPException(409 if "progress" in str(e) or "being generated" in str(e) else 400, str(e))
+    finally:
+        staging.unlink(missing_ok=True)
+    db.log(None, "success", f"Restored a backup: {counts['projects']} projects, {counts['outliers']} outliers, "
+                            f"{counts['teardowns']} teardowns, {counts['plans']} plans")
+    return {"restored": counts}
 
 
 @app.get("/api/projects/{project_id}/rates")

@@ -127,6 +127,22 @@ detector reports no findings on `static/`.
 
 **Bank → Export** downloads your saved outliers and their teardowns as JSON for the templatizing step.
 
+## Deploy to Railway
+
+The full app runs on Railway (long research runs, ffmpeg, SQLite) from the `Dockerfile` in the repo root:
+
+1. New project → deploy this GitHub repo. Railway builds the Dockerfile.
+2. Add a **volume** mounted at `/data`. The app keeps its database and frames there (it reads `RAILWAY_VOLUME_MOUNT_PATH`,
+   or `DATA_DIR`).
+3. Set variables: `SCRAPECREATORS_API_KEY`, `OPENROUTER_API_KEY`, and `APP_PASSWORD`. Every page and API call then
+   needs that password (the browser asks; any username). On Railway the app refuses to run without one, because an open
+   copy could spend your credits.
+4. Healthcheck path `/api/health`, then generate a domain.
+
+**Moving your research there:** Settings → **Download backup** on your local copy, then Settings → **Restore from a
+backup…** on the deployed one. A backup is one `.tar.gz` of the database and media; restore uploads it in 8 MB parts and
+replaces everything on that copy (`GET /api/backup`, `POST /api/restore`).
+
 ## Read-only snapshot (e.g. for Vercel)
 
 The full app can't run on a static host (long background jobs, ffmpeg, SQLite), but you can publish a read-only copy of

@@ -3,7 +3,8 @@ import shutil
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-DATA = ROOT / "data"
+# On Railway the data lives on the attached volume; locally in ./data.
+DATA = Path(os.environ.get("DATA_DIR") or os.environ.get("RAILWAY_VOLUME_MOUNT_PATH") or ROOT / "data")
 MEDIA = DATA / "media"
 DB_PATH = DATA / "research.db"
 
