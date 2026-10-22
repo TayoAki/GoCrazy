@@ -37,6 +37,7 @@ def _run_ai(shortcode, project_id, data):
 
 def apply_ai(data, model):
     result, usage = ai.analyze(data, model)
+    data["notes"] = [n for n in data.get("notes") or [] if not n.startswith("AI analysis failed")]  # it worked this time
     return ai.merge(data, result, model, usage)
 
 
@@ -51,6 +52,7 @@ def apply_scenes(data, model):
         sc["beat"] = got.get("beat") if got.get("beat") in annotate.BEATS else None
         sc["on_screen_text"] = got.get("on_screen_text")
         sc.update({k: got.get(k) for k in ai.SEALCAM_KEYS})
+    data["notes"] = [n for n in data.get("notes") or [] if not n.startswith("Scene breakdown failed")]
     data["scenes_ai"] = {"model": model, "cost": usage.get("cost"), "tokens": usage.get("total_tokens"),
                          "missing": [sc["i"] for sc in data["scenes"] if not sc.get("S")]}
     return data
