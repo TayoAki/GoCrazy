@@ -687,7 +687,8 @@ function planDay(p, i, rates, planId) {
           <div class="scene-h"><b>Shot ${k + 1}</b>${sh.beat ? `<span class="beat ${esc(sh.beat)}">${esc(sh.beat)}</span>` : ""}${sh.duration_s ? `<span class="tc">about ${sh.duration_s} s</span>` : ""}
             ${sh.reference ? shotRef(sh.reference) : ""}</div>
           ${sh.say ? `<p class="say">“${fills(sh.say)}”</p>` : ""}${sh.on_screen_text ? `<p class="small"><b>On screen:</b> ${fills(sh.on_screen_text)}</p>` : ""}
-          ${sealcamRows(sh, fills)}</li>`).join("")}</ol></section>` : p.shots_error ? `<div class="notice">${ICON.alert}<div>The shot list failed: ${esc(p.shots_error)}</div></div>` : ""}
+          ${sealcamRows(sh, fills)}
+          ${sh.kept || sh.changed ? `<p class="small muted">${sh.kept ? `<b>Kept:</b> ${fills(sh.kept)}` : ""}${sh.kept && sh.changed ? " · " : ""}${sh.changed ? `<b>Changed:</b> ${fills(sh.changed)}` : ""}</p>` : ""}</li>`).join("")}</ol></section>` : p.shots_error ? `<div class="notice">${ICON.alert}<div>The shot list failed: ${esc(p.shots_error)}</div></div>` : ""}
       <section class="sec"><div class="sec-h"><h2>Close and post</h2></div>
         <dl class="rows"><dt>Call to action</dt><dd class="quote">“${fills(p.cta?.line)}”<span class="note">${esc(cap(label(p.cta_type)))} · ${esc(label(p.cta?.mechanic))}</span></dd>
           <dt>Caption</dt><dd>${fills(p.caption_first_line)}<span class="note">${(p.hashtags || []).map((h) => "#" + esc(String(h).replace(/^#/, ""))).join(" ")}</span></dd></dl></section>

@@ -38,9 +38,13 @@ EVIDENCE_ATTRS = ["hook_pattern", "format", "angle", "video_type", "complexity",
 SKIP_VALUES = {None, "", "none", "unknown", "niche_specific"}
 
 RULES = """Hard rules:
-1. Borrow STRUCTURE, never CONTENT. Reuse a teardown's hook pattern, beat sequence and format, but write every line new
-   for this creator's niche. Never copy a sentence from a teardown. Frame words of a hook pattern ("Is it possible
-   to…", "Here's the…") may stay. Never quote song lyrics.
+1. Copy the TEMPLATE, never the CONTENT. The template is everything that made the reference work: its format, its set
+   and setting type, who is on screen and how they are arranged, framing, lighting, visual devices (overlays,
+   cut-outs, labels, grids), on-screen text pattern, hook pattern, beat sequence and pace. Keep all of it; that is the
+   proven strategy. Only the content changes: write every spoken line new for this creator's niche (never copy a
+   sentence; frame words of a hook or text pattern such as "Remember…", "X + Y", "Is it possible to…" may stay), use
+   this script's own items (garments, colours, places, numbers), and drop anything that identifies the original
+   creator (their face, name, logo, product or brand). Never quote song lyrics.
 2. Never invent facts about the creator (results, numbers, clients, stories, credentials). Use only facts given in
    ABOUT THE CREATOR. Where a post needs a personal fact you don't have, write a placeholder in double square
    brackets, e.g. [[YOUR CLIENT RESULT: before → after, with a number]].
@@ -55,7 +59,9 @@ delivery, format, beats, CTA.
 5. Base each post on 1-3 teardowns (by id) whose hook, structure or format it reuses. Teardowns with
    doubled_down_template=true come from accounts that post that template again and again and keep winning: prefer
    them, and when you reuse one, give the post a series_marker so the creator can repeat it too.
-6. Spread the week: no format or angle more than twice. Never use the talking_head format: pick an engaging one.
+6. Keep each post's format: use exactly the format of the teardown it borrows from (if its sources differ, pick one of
+   theirs). Variety across the week comes from topics, not from changing a proven format; a doubled-down template can
+   fill several days.
 7. Use only these values: angle {angle}; video_type {video_type}; delivery {delivery}; story_type {story_type};
    format {format}; hook_pattern {hook_pattern}; complexity {complexity}.
 
@@ -70,6 +76,8 @@ the proven outliers it is based on.
 """ + RULES + """
 4. Follow the outline's angle, format, delivery and hook pattern, and the slot's funnel stage, content type and CTA type.
 5. Beat labels: {beats}. CTA mechanic: {cta_mechanic}.
+6. "show", "edit" and the visual hook recreate the source teardowns' visuals (their visual_hook, format and set): the same
+   set, the same people and arrangement, the same overlays and on-screen text pattern, with this script's own items.
 
 Reply with ONLY a JSON object:
 {{"hook": {{"verbal": "the first sentence spoken (≤15 words)", "written": "on-screen text in the first 3 s (≤7 words)",
@@ -92,9 +100,12 @@ grammar of the proven outlier scenes it is based on. Each reference scene is des
 Rules for the shot list:
 4. One shot per camera setup or cut, in order, covering every beat of the script; a beat can take several shots. The
    durations add up to about the script's length.
-5. For each beat, borrow the framing, camera movement, lighting, pace and on-screen text style of the reference scenes
-   with the same job, but write the subject and environment for THIS creator and THIS script. Never copy a reference's
-   on-screen text or setting details that identify its creator.
+5. For each beat, recreate the reference scene with the same job: the same setting type and set dressing (a dark
+   walnut wardrobe wall stays a dark walnut wardrobe wall), the same people and arrangement on screen, the same
+   wardrobe style, framing, lens and camera movement, the same lighting, the same overlays, cut-outs and on-screen text
+   pattern, the same pace. Change only what rule 1 says must change: the words, this script's own items, and anything
+   that identifies the original creator. Never invent a different set or visual device.
+   kept: what this shot keeps from its reference scene. changed: what it changes, and why (rule 1).
 6. Write each SEALCaM field as an explicit instruction for setting the shot up, in the terms above. SEALCaM is visual
    only: no sound, music or voice in any field.
 7. say: the exact script words spoken during this shot (split a beat's line across its shots), or null.
@@ -102,7 +113,8 @@ Rules for the shot list:
 8. Beat labels: {beats}.
 
 Reply with ONLY a JSON object: {{"shots": [{{"beat": str, "duration_s": number, "say": str|null,
- "on_screen_text": str|null, "S": str, "E": str, "A": str, "L": str, "Ca": str, "M": str, "reference": str|null}}]}}"""
+ "on_screen_text": str|null, "S": str, "E": str, "A": str, "L": str, "Ca": str, "M": str, "reference": str|null,
+ "kept": str, "changed": str}}]}}"""
 
 _running = set()
 
@@ -288,7 +300,8 @@ def add_shots(posts, context, model):
             post["shots_error"] = str(e)
             return 0
         post["shots"] = [{**{k: sh.get(k) for k in ("beat", "duration_s", "say", "on_screen_text", *SEALCAM_KEYS)},
-                          "reference": sh.get("reference")} for sh in got.get("shots") or [] if sh.get("S")]
+                          "reference": sh.get("reference"), "kept": sh.get("kept"), "changed": sh.get("changed")}
+                         for sh in got.get("shots") or [] if sh.get("S")]
         post.pop("shots_error", None)
         return c
 
@@ -315,12 +328,19 @@ def _context(project, about, followers):
             f"Followers: {followers if followers is not None else 'unknown'}\n\n")
 
 
-def _outline_problems(posts):
-    """Breaches of outline rule 6, which the model sometimes ignores."""
-    problems = [f"slot {p.get('slot')} uses the talking_head format" for p in posts if p.get("format") == "talking_head"]
-    for key in ("format", "angle"):
-        problems += [f"{key} {value} is used {n} times (max 2)" for value, n in Counter(p.get(key) for p in posts).items()
-                     if value and n > 2]
+def _source_formats(post, teardowns):
+    by_id = {t["id"]: t for t in teardowns}
+    return [by_id[s]["format"] for s in post.get("source_outliers") or [] if s in by_id and by_id[s].get("format") not in SKIP_VALUES]
+
+
+def _outline_problems(posts, teardowns):
+    """Posts that left their sources' format (rule 6), or name no source at all."""
+    problems = []
+    for p in posts:
+        if not p.get("source_outliers"):
+            problems.append(f"slot {p.get('slot')} names no source teardown")
+        elif (formats := _source_formats(p, teardowns)) and p.get("format") not in formats:
+            problems.append(f"slot {p.get('slot')} uses format {p.get('format')}, but its sources use {', '.join(sorted(set(formats)))}")
     return problems
 
 
@@ -339,12 +359,16 @@ def _generate(project_id, about, followers, start_date, posts, model, teardowns)
                     f"TEARDOWNS OF PROVEN OUTLIERS ({len(teardowns)}):\n{json.dumps(teardowns, ensure_ascii=False)}")
     outline, c = _chat_json(model, OUTLINE_SYSTEM.format(**vocab), outline_user, 0.6)
     cost += c
-    problems = _outline_problems(outline.get("posts", []))
+    problems = _outline_problems(outline.get("posts", []), teardowns)
     if problems:  # one revision pass when the model ignores rule 6
         outline, c = _chat_json(model, OUTLINE_SYSTEM.format(**vocab),
                                 outline_user + f"\n\nYOUR PREVIOUS OUTLINE:\n{json.dumps(outline, ensure_ascii=False)}\n\n"
                                 "Return it again with only these problems fixed:\n- " + "\n- ".join(problems), 0.3)
         cost += c
+    for p in outline.get("posts", []):  # still off after the revision: the sources' format wins
+        formats = _source_formats(p, teardowns)
+        if formats and p.get("format") not in formats:
+            p["format"] = Counter(formats).most_common(1)[0][0]
     by_slot = {p.get("slot"): p for p in outline.get("posts", [])}
     if len(by_slot) < len(slots):
         raise RuntimeError(f"The outline had {len(by_slot)} of {len(slots)} posts")

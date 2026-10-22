@@ -176,6 +176,10 @@ def post_markdown(post, rates, sources, refs=None, level=1, cards=None):
             out += _sealcam(shot, t)
             if shot.get("reference"):
                 out.append(f"- **Borrowed from:** {t(shot['reference'])}")
+            if shot.get("kept"):
+                out.append(f"- **Kept from the reference:** {t(shot['kept'])}")
+            if shot.get("changed"):
+                out.append(f"- **Changed:** {t(shot['changed'])}")
             out.append("")
     says = [t(b["say"]) for b in post.get("beats") or [] if b.get("say")]
     if says:
