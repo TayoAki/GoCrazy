@@ -4,9 +4,9 @@ import json
 import re
 import threading
 
-from . import ai, annotate, db, media
+from . import ai, annotate, db, llm, media
 from .annotate import field
-from .config import MEDIA, has_ffmpeg, openrouter_key, scrapecreators_key
+from .config import MEDIA, has_ffmpeg, scrapecreators_key
 from .scrapecreators import ScrapeCreators, ScrapeError
 
 
@@ -38,7 +38,7 @@ def _run_ai(shortcode, project_id, data):
 def apply_ai(data, model):
     result, usage = ai.analyze(data, model)
     data["notes"] = [n for n in data.get("notes") or [] if not n.startswith("AI analysis failed")]  # it worked this time
-    return ai.merge(data, result, model, usage)
+    return ai.merge(data, result, llm.label(model), usage)
 
 
 def apply_scenes(data, model):
@@ -53,7 +53,7 @@ def apply_scenes(data, model):
         sc["on_screen_text"] = got.get("on_screen_text")
         sc.update({k: got.get(k) for k in ai.SEALCAM_KEYS})
     data["notes"] = [n for n in data.get("notes") or [] if not n.startswith("Scene breakdown failed")]
-    data["scenes_ai"] = {"model": model, "cost": usage.get("cost"), "tokens": usage.get("total_tokens"),
+    data["scenes_ai"] = {"model": llm.label(model), "cost": usage.get("cost"), "tokens": usage.get("total_tokens"),
                          "missing": [sc["i"] for sc in data["scenes"] if not sc.get("S")]}
     return data
 
@@ -61,7 +61,7 @@ def apply_scenes(data, model):
 def apply_madlib(data, model):
     """Fill-in-the-blank templates of the reel's own script, hooks, on-screen text and caption (playbook Phase 4)."""
     result, usage = ai.madlib(data, model)
-    data["madlib"] = {**result, "model": model, "cost": usage.get("cost")}
+    data["madlib"] = {**result, "model": llm.label(model), "cost": usage.get("cost")}
     data["notes"] = [n for n in data.get("notes") or [] if not n.startswith("Madlib failed")]
     return data
 
@@ -275,7 +275,7 @@ def build(shortcode, project_id):
         "scenes": _scenes(shortcode, video),
         "created_at": db.now(),
     }
-    if settings["ai_annotation"] and openrouter_key():
+    if settings["ai_annotation"] and llm.available():
         try:
             data = apply_ai(data, settings["ai_model"])
         except Exception as e:  # the automatic card is still useful without the AI pass

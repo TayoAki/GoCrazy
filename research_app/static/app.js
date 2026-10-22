@@ -324,7 +324,7 @@ function renderBottom() {
     <div class="grp"><span>Run the app locally to research, tear down and plan</span></div>` : `
     <div class="grp">
       <span><span class="sd ${st.scrapecreators ? "on" : "off"}"></span>ScrapeCreators ${st.scrapecreators ? "· " + credits : "· key missing"}</span>
-      <span><span class="sd ${st.openrouter ? "on" : ""}"></span>OpenRouter ${st.openrouter ? "· " + esc(model) : "· not set"}</span>
+      <span><span class="sd ${st.openrouter ? "on" : ""}"></span>${st.ai_provider === "claude-code" ? "AI · Claude Code" : st.openrouter ? "OpenRouter · " + esc(model) : "AI · not set"}</span>
       <span><span class="sd ${st.ffmpeg ? "on" : "off"}"></span>ffmpeg ${st.ffmpeg ? "ready" : "missing"}</span>
     </div>
     <div class="grp">${run ? `<span><span class="sd busy"></span>Run #${run.id} · ${esc(run.message || "")} · ${run.credits_used} credits</span>` :
@@ -821,7 +821,7 @@ function settingsView() {
     <div class="panel"><div class="kv">
       <div><span class="k">ScrapeCreators</span><span class="v">${st.scrapecreators ? "Connected" : "Key missing"}</span></div>
       <div><span class="k">Credits</span><span class="v">${st.credits != null ? Number(st.credits).toLocaleString() : "—"}</span></div>
-      <div><span class="k">OpenRouter</span><span class="v">${st.openrouter ? "Connected" : "Not set"}</span></div>
+      <div><span class="k">AI</span><span class="v">${st.ai_provider === "claude-code" ? "Claude Code (your plan)" : st.openrouter ? "OpenRouter" : "Not set"}</span></div>
       <div><span class="k">ffmpeg</span><span class="v">${st.ffmpeg ? "Installed" : "Missing"}</span></div></div></div>
     <p class="small muted" style="margin:12px 0">Keys come from environment variables or the repo's .env file (SCRAPECREATORS_API_KEY, OPENROUTER_API_KEY). They are never shown or sent to the browser.</p>
     ${STATIC ? "" : `<button class="btn sm" data-action="refresh-balance">${ICON.refresh} Refresh balance</button>`}

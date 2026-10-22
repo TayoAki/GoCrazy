@@ -16,7 +16,7 @@ from starlette.background import BackgroundTask
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import annotate, backup, brief, config, db, doubledown, madlibs, media, pipeline, planner, teardown
+from . import annotate, backup, brief, config, db, doubledown, llm, madlibs, media, pipeline, planner, teardown
 from .config import DATA, DEFAULT_SETTINGS, MEDIA
 from .scrapecreators import ScrapeCreators, ScrapeError
 
@@ -155,7 +155,7 @@ def status(refresh: bool = False):
         except ScrapeError as e:
             _balance["error"] = str(e)
         _balance["checked"] = time.time()
-    return {"scrapecreators": bool(key), "openrouter": bool(config.openrouter_key()), "ffmpeg": config.has_ffmpeg(),
+    return {"scrapecreators": bool(key), "openrouter": llm.available(), "ai_provider": llm.provider(), "ffmpeg": config.has_ffmpeg(),
             "credits": _balance["value"], "credits_error": _balance["error"]}
 
 
@@ -379,8 +379,8 @@ def start_teardown(shortcode: str, project_id: int):
 
 @app.post("/api/teardowns/{shortcode}/madlib")
 def make_madlib(shortcode: str, project_id: int):
-    if not config.openrouter_key():
-        raise HTTPException(400, "OPENROUTER_API_KEY is not set")
+    if not llm.available():
+        raise HTTPException(400, "No AI provider: install Claude Code or set OPENROUTER_API_KEY")
     try:
         teardown.start_madlib(shortcode, project_id)
     except RuntimeError as e:
@@ -390,8 +390,8 @@ def make_madlib(shortcode: str, project_id: int):
 
 @app.post("/api/teardowns/{shortcode}/scenes")
 def break_down_scenes(shortcode: str, project_id: int):
-    if not config.openrouter_key():
-        raise HTTPException(400, "OPENROUTER_API_KEY is not set")
+    if not llm.available():
+        raise HTTPException(400, "No AI provider: install Claude Code or set OPENROUTER_API_KEY")
     try:
         teardown.start_scenes(shortcode, project_id)
     except RuntimeError as e:
@@ -401,8 +401,8 @@ def break_down_scenes(shortcode: str, project_id: int):
 
 @app.post("/api/teardowns/{shortcode}/ai")
 def rerun_ai(shortcode: str, project_id: int):
-    if not config.openrouter_key():
-        raise HTTPException(400, "OPENROUTER_API_KEY is not set")
+    if not llm.available():
+        raise HTTPException(400, "No AI provider: install Claude Code or set OPENROUTER_API_KEY")
     try:
         teardown.start_ai(shortcode, project_id)
     except RuntimeError as e:
@@ -439,8 +439,8 @@ def edit_teardown(shortcode: str, body: FieldsPatch):
 
 @app.post("/api/projects/{project_id}/plans")
 def create_plan(project_id: int, body: PlanIn):
-    if not config.openrouter_key():
-        raise HTTPException(400, "OPENROUTER_API_KEY is not set")
+    if not llm.available():
+        raise HTTPException(400, "No AI provider: install Claude Code or set OPENROUTER_API_KEY")
     with db.connect() as conn:
         settings = db.project_settings(get_project(conn, project_id))
     try:

@@ -1,16 +1,12 @@
 """AI annotation of a teardown through OpenRouter: the model looks at the frames, transcript and caption and fills the
 fields that need eyes or judgement, choosing only from the playbook's closed vocabularies."""
 
-import base64
 import json
-import re
-
-import requests
 
 from .annotate import BEATS, VOCAB, field
-from .config import MEDIA, openrouter_key
+from . import llm
+from .config import MEDIA
 
-URL = "https://openrouter.ai/api/v1/chat/completions"
 MAX_OVERVIEW_FRAMES = 12
 
 SYSTEM = """You analyze one viral short-form video (an Instagram reel) so its structure can be reused as a template.
@@ -74,9 +70,6 @@ TEXT_FIELDS = {"topic", "written_hook", "visual_hook", "episode_marker", "struct
 KEEP_IF_SET = {"cta_keyword", "cta_text"}
 
 
-def _data_url(path):
-    return "data:image/jpeg;base64," + base64.b64encode(path.read_bytes()).decode()
-
 
 def _frame_paths(data, key, limit=None):
     names = [url.rsplit("/", 1)[-1] for url in (data.get("media") or {}).get(key) or []]
@@ -118,29 +111,19 @@ def analyze(data, model):
             f"AUDIO FACTS FROM INSTAGRAM: {_audio_facts(data.get('music'))}\n\n"
             f"CAPTION:\n{(data.get('caption') or '')[:2000]}\n\nTRANSCRIPT:\n{_transcript_text(data.get('transcript'))[:8000]}\n\n"
             f"AUTOMATIC PRE-ANNOTATIONS (hints):\n{json.dumps(hints)}")
-    content = [{"type": "text", "text": text}]
+    parts = [("text", text)]
     if hook_frames:
-        content.append({"type": "text", "text": f"HOOK FRAMES (first 3 s, 0.5 s apart, {len(hook_frames)} images):"})
-        content += [{"type": "image_url", "image_url": {"url": _data_url(p)}} for p in hook_frames]
+        parts.append(("text", f"HOOK FRAMES (first 3 s, 0.5 s apart, {len(hook_frames)} images):"))
+        parts += [("image", str(p)) for p in hook_frames]
     if overview:
-        content.append({"type": "text", "text": f"OVERVIEW FRAMES (sampled across the video, {len(overview)} images, numbered in order):"})
-        content += [{"type": "image_url", "image_url": {"url": _data_url(p)}} for p in overview]
+        parts.append(("text", f"OVERVIEW FRAMES (sampled across the video, {len(overview)} images, numbered in order):"))
+        parts += [("image", str(p)) for p in overview]
     if not hook_frames and not overview:
-        content.append({"type": "text", "text": "(No frames available: set written_hook to null and format to \"unknown\". "
-                        "Set visual_hook only if the transcript makes it obvious, otherwise null.)"})
+        parts.append(("text", "(No frames available: set written_hook to null and format to \"unknown\". "
+                      "Set visual_hook only if the transcript makes it obvious, otherwise null.)"))
 
-    resp = requests.post(URL, timeout=180, headers={"Authorization": f"Bearer {openrouter_key()}"}, json={
-        "model": model, "temperature": 0.2, "max_tokens": 2000, "usage": {"include": True},
-        "messages": [{"role": "system", "content": SYSTEM}, {"role": "user", "content": content}],
-    })
-    body = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
-    if resp.status_code != 200 or "choices" not in body:
-        raise RuntimeError(f"OpenRouter {resp.status_code}: {(body.get('error') or {}).get('message') or resp.text[:200]}")
-    reply = body["choices"][0]["message"]["content"] or ""
-    match = re.search(r"\{.*\}", reply, re.S)
-    if not match:
-        raise RuntimeError("The model did not return JSON")
-    return json.loads(match.group(0)), body.get("usage") or {}
+    result, cost = llm.ask_json(SYSTEM, parts, model, 2000, 0.2)
+    return result, {"cost": cost}
 
 
 def merge(data, result, model, usage):
@@ -238,28 +221,17 @@ def breakdown(data, model):
     if not scenes:
         raise RuntimeError("No scenes to break down: the video couldn't be analyzed")
     folder = MEDIA / data["shortcode"]
-    content = [{"type": "text", "text": f"Creator: @{data['username']} · {len(scenes)} scenes · "
-                f"AUDIO FACTS FROM INSTAGRAM: {_audio_facts(data.get('music'))}\n\nCAPTION:\n{(data.get('caption') or '')[:1000]}"}]
+    parts = [("text", f"Creator: @{data['username']} · {len(scenes)} scenes · "
+              f"AUDIO FACTS FROM INSTAGRAM: {_audio_facts(data.get('music'))}\n\nCAPTION:\n{(data.get('caption') or '')[:1000]}")]
     for sc in scenes:
         said = sc.get("said") or "(no speech)"
-        content.append({"type": "text", "text": f"SCENE {sc['i']} · {sc['start']:.2f}–{sc['end']:.2f} s"
-                        + ("" if sc.get("cut", True) else " · continues the previous shot (no cut)")
-                        + (f" · {sc['flash_cuts']} flash cuts merged in" if sc.get("flash_cuts") else "") + f" · said: {said}"})
+        parts.append(("text", f"SCENE {sc['i']} · {sc['start']:.2f}–{sc['end']:.2f} s"
+                      + ("" if sc.get("cut", True) else " · continues the previous shot (no cut)")
+                      + (f" · {sc['flash_cuts']} flash cuts merged in" if sc.get("flash_cuts") else "") + f" · said: {said}"))
         names = [url.rsplit("/", 1)[-1] for url in sc.get("frames") or []]
-        content += [{"type": "image_url", "image_url": {"url": _data_url(folder / name)}} for name in names if (folder / name).exists()]
-    resp = requests.post(URL, timeout=300, headers={"Authorization": f"Bearer {openrouter_key()}"}, json={
-        "model": model, "temperature": 0.2, "max_tokens": 16000, "usage": {"include": True},
-        "response_format": {"type": "json_object"},
-        "messages": [{"role": "system", "content": SCENES_SYSTEM}, {"role": "user", "content": content}],
-    })
-    body = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
-    if resp.status_code != 200 or "choices" not in body:
-        raise RuntimeError(f"OpenRouter {resp.status_code}: {(body.get('error') or {}).get('message') or resp.text[:200]}")
-    reply = body["choices"][0]["message"]["content"] or ""
-    match = re.search(r"\{.*\}", reply, re.S)
-    if not match:
-        raise RuntimeError("The model did not return JSON")
-    return json.loads(match.group(0)).get("scenes") or [], body.get("usage") or {}
+        parts += [("image", str(folder / name)) for name in names if (folder / name).exists()]
+    result, cost = llm.ask_json(SCENES_SYSTEM, parts, model, 16000, 0.2)
+    return result.get("scenes") or [], {"cost": cost}
 
 
 # ---------- madlibs (playbook Phase 4) ----------
@@ -308,23 +280,5 @@ def madlib(data, model):
             f"VISUAL HOOK: {f.get('visual_hook') or '(none)'}\n\nTRANSCRIPT:\n{_transcript_text(data.get('transcript'))[:6000]}\n\n"
             f"SCENES (beat, words spoken, on-screen text):\n{scenes[:6000] or '(no scenes)'}\n\n"
             f"CAPTION (first line): {(data.get('caption') or '').split(chr(10))[0][:300]}")
-    resp = requests.post(URL, timeout=300, headers={"Authorization": f"Bearer {openrouter_key()}"}, json={
-        "model": model, "temperature": 0.2, "max_tokens": 8000, "usage": {"include": True},
-        "response_format": {"type": "json_object"},
-        "messages": [{"role": "system", "content": MADLIB_SYSTEM}, {"role": "user", "content": text}],
-    })
-    body = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
-    if resp.status_code != 200 or "choices" not in body:
-        raise RuntimeError(f"OpenRouter {resp.status_code}: {(body.get('error') or {}).get('message') or resp.text[:200]}")
-    reply, usage = body["choices"][0]["message"]["content"] or "", body.get("usage") or {}
-    try:
-        return json.loads(re.search(r"\{.*\}", reply, re.S).group(0)), usage
-    except (AttributeError, ValueError):  # long scripts sometimes come back with a broken quote: one repair pass
-        fixed = requests.post(URL, timeout=300, headers={"Authorization": f"Bearer {openrouter_key()}"}, json={
-            "model": model, "temperature": 0, "max_tokens": 8000, "usage": {"include": True},
-            "response_format": {"type": "json_object"},
-            "messages": [{"role": "system", "content": "You repair broken JSON. Reply with only the corrected JSON object, changing nothing else."},
-                         {"role": "user", "content": reply}],
-        }).json()
-        usage = {"cost": (usage.get("cost") or 0) + ((fixed.get("usage") or {}).get("cost") or 0)}
-        return json.loads(re.search(r"\{.*\}", fixed["choices"][0]["message"]["content"] or "", re.S).group(0)), usage
+    result, cost = llm.ask_json(MADLIB_SYSTEM, [("text", text)], model, 8000, 0.2)  # repairs broken JSON once
+    return result, {"cost": cost}

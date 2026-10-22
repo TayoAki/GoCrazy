@@ -12,14 +12,10 @@ from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, timedelta
 
-import requests
-
-from . import db, teardown
+from . import db, llm, teardown
 from .ai import SEALCAM, SEALCAM_KEYS
 from .annotate import BEATS, VOCAB
-from .config import openrouter_key
 
-URL = "https://openrouter.ai/api/v1/chat/completions"
 
 # Weekly mix by follower tier: counts from the playbook (video #8), ordered so a shorter week stays balanced.
 WEEK_PATTERNS = {
@@ -246,15 +242,7 @@ def _run(plan_id, project_id, about, followers, start_date, posts, model, teardo
 
 
 def _chat(model, system, user, temperature, max_tokens=6000):
-    resp = requests.post(URL, timeout=300, headers={"Authorization": f"Bearer {openrouter_key()}"}, json={
-        "model": model, "temperature": temperature, "max_tokens": max_tokens, "usage": {"include": True},
-        "response_format": {"type": "json_object"},
-        "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
-    })
-    body = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
-    if resp.status_code != 200 or "choices" not in body:
-        raise RuntimeError(f"OpenRouter {resp.status_code}: {(body.get('error') or {}).get('message') or resp.text[:200]}")
-    return body["choices"][0]["message"]["content"] or "", (body.get("usage") or {}).get("cost") or 0
+    return llm.ask(system, [("text", user)], model, max_tokens, temperature)
 
 
 def _parse(reply):
@@ -266,13 +254,7 @@ def _parse(reply):
 
 def _chat_json(model, system, user, temperature, max_tokens=6000):
     """One call, plus one repair pass if the reply isn't valid JSON. Returns (parsed, cost)."""
-    reply, cost = _chat(model, system, user, temperature, max_tokens)
-    try:
-        return _parse(reply), cost
-    except ValueError:
-        fixed, fix_cost = _chat(model, "You repair broken JSON. Reply with only the corrected JSON object, changing nothing else.",
-                                reply, 0, max_tokens)
-        return _parse(fixed), cost + fix_cost
+    return llm.ask_json(system, [("text", user)], model, max_tokens, temperature)
 
 
 def reference_scenes(shortcodes):
