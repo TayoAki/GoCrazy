@@ -71,8 +71,14 @@ def post_markdown(post, rates, sources, refs=None, level=1):
         out.append(f"- **Series:** {post['series_marker']}")
     out += [f"- **Odds:** {_pct(odds.get('p5'))} chance of a 5× outlier (this niche's base rate is {_pct(rates.get('p5'))}), "
             f"rated {odds.get('band', 'n/a')}, {odds.get('confidence', 'low')} confidence. "
-            f"{_pct(odds.get('p1'))} to beat your follower count, {_pct(odds.get('p2'))} to reach 2×, {_pct(odds.get('p10'))} to reach 10×.",
-            f"- **Why it should work:** {t(post.get('why'))}"]
+            f"{_pct(odds.get('p1'))} to beat your follower count, {_pct(odds.get('p2'))} to reach 2×, {_pct(odds.get('p10'))} to reach 10×."]
+    factors = odds.get("factors") or {}
+    if odds.get("multiplier") is not None:  # the same reasoning the app shows under the odds
+        out.append(f"  - {odds['multiplier']}× the niche base rate: evidence ×{factors.get('evidence')} · funnel stage ×{factors.get('funnel')}"
+                   + (f" · its sources median {factors['source_median_ratio']}×" if factors.get("source_median_ratio") else ""))
+        out += [f"  - {_label(s['attr']).capitalize()} “{_label(s['value'])}”: used by {s['count']} of {s['of']} outliers"
+                for s in odds.get("support") or []]
+    out.append(f"- **Why it should work:** {t(post.get('why'))}")
     borrowed = [sources[s] for s in post.get("source_outliers") or [] if s in sources]
     if borrowed:
         out.append("- **Borrows its structure from:**")
