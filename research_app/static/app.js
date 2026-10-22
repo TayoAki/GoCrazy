@@ -115,7 +115,7 @@ const ICON = {
 // ---------- state ----------
 const S = {
   view: "research", tab: "outliers", projects: [], projectId: null, outliers: [], creators: [], doubled: [], patterns: null, rates: null,
-  runs: [], plans: [], planId: null, planForm: false, open: null, td: null, editing: null, edits: {},
+  runs: [], plans: [], planId: null, planForm: false, open: null, td: null, editing: null, edits: {}, mlEdits: {},
   status: {}, vocab: null, sort: "ratio", filter: "active", events: [], seenEvents: 0,
 };
 const project = () => S.projects.find((p) => p.id === S.projectId);
@@ -539,7 +539,7 @@ function teardownPage() {
       </div>
     </div>`;
   if (td.status === "loading") return head + skeleton();
-  if (td.status === "running") return head + `<p class="muted" style="margin:16px 0">${{ ai: "The AI is re-reading the frames and transcript…", scenes: "Fetching the video again and describing every scene in SEALCaM. Usually under a minute." }[td.mode] || "Pulling post details, transcript and frames, then running the AI analysis. Usually 30–90 seconds."}</p>` + skeleton();
+  if (td.status === "running") return head + `<p class="muted" style="margin:16px 0">${{ ai: "The AI is re-reading the frames and transcript…", madlib: "Turning the reel's script into a fill-in-the-blank template…", scenes: "Fetching the video again and describing every scene in SEALCaM. Usually under a minute." }[td.mode] || "Pulling post details, transcript and frames, then running the AI analysis. Usually 30–90 seconds."}</p>` + skeleton();
   if (td.status === "none") return head + `<div class="empty-state"><h2>Not torn down yet</h2>
       <p>A teardown pulls the post details and transcript (about 2 ScrapeCreators credits), grabs frames from the video, then has the AI fill in the breakdown${S.status.openrouter ? " (a few cents)" : ""}.</p>
       ${STATIC ? "" : `<button class="btn primary" data-action="teardown">${ICON.cut} Tear down</button>`}</div>`;
@@ -588,11 +588,62 @@ function teardownPage() {
     ${section("value", f)}
     ${section("format", f, "", facts([["Average shot", f.avg_shot_s?.value != null ? f.avg_shot_s.value + " s" : null], ["Hard cuts", f.cuts?.value]]) +
       (frames.length ? `<p class="small muted" style="margin:16px 0 8px">The whole video, about one frame every ${step} s</p><div class="timeline">${frames.map((src) => `<img src="${esc(src)}" alt="" loading="lazy" data-zoom="${esc(src)}">`).join("")}</div>` : ""))}
+    ${madlibSec(data)}
     ${scenesSec}
     ${section("position", f, "", evidence)}
     ${data.transcript ? `<details class="raw"><summary>Transcript</summary><div class="prose">${esc(data.transcript.text)}</div></details>` : ""}
     ${data.caption ? `<details class="raw"><summary>Caption</summary><div class="prose">${esc(data.caption)}</div></details>` : ""}
     <div class="sec">${tools}</div>`;
+}
+
+function madlibSec(data) {
+  const m = data.madlib;
+  const tool = STATIC || !S.status.openrouter ? "" : `<button class="btn sm quiet" data-action="madlib">${ICON.sparkle} ${m ? "Redo madlib" : "Make madlib"}</button>`;
+  if (!m) return `<section class="sec" aria-labelledby="sec-madlib"><div class="sec-h"><h2 id="sec-madlib">Madlib</h2>${tool}</div>
+    <p class="muted">The reel's own script as a fill-in-the-blank template. Plans make one automatically for every reel they borrow from.</p></section>`;
+  const rows = [...Object.entries(m.hooks || {}).filter(([, v]) => v?.template).map(([k, v]) => [`${cap(k)} hook`, v]),
+    ...(m.spoken || []).map((x) => [x.beat || "Line", x]), ...(m.on_screen || []).map((x) => ["On screen", x]),
+    ...(m.caption?.template ? [["Caption", m.caption]] : [])];
+  const sh = data.madlib_sheet;
+  const editor = sh && sh.variables.length ? `
+    <h3 class="sub">The original, with its variables</h3>
+    <ol class="ml-lines">${sh.lines.map((l) => `<li><span class="lbl">${esc(l.label)}</span><span>${l.aligned ? mlRender(l, null, true) : `<span class="free">${esc(l.text || "")}</span>`}</span></li>`).join("")}</ol>
+    <h3 class="sub">Your version: change the variables</h3>
+    <div class="tablewrap"><table class="ml-vars"><thead><tr><th>Variable</th><th>Original</th><th>Your value</th></tr></thead><tbody>
+      ${sh.variables.map((v) => `<tr><td><span class="slot">${esc(v.slot)}</span>${v.rule ? `<div class="xs muted">${esc(v.rule)}</div>` : ""}</td><td>${esc(v.value)}</td>
+        <td><input type="text" data-mlkey="${esc(mlKey(v.slot, v.value))}" value="${esc(mlValue(v.slot, v.value))}" aria-label="Your value for ${esc(v.slot)}"></td></tr>`).join("")}
+    </tbody></table></div>
+    <div class="toolbar" style="margin-top:12px"><button class="btn sm" data-action="copy-madlib">${ICON.copy} Copy your version</button>
+      <button class="btn sm quiet" data-action="reset-madlib">${ICON.refresh} Back to the original</button></div>
+    <ol class="ml-lines" id="ml-yours">${mlYours(sh)}</ol>` : "";
+  return `<section class="sec" aria-labelledby="sec-madlib"><div class="sec-h"><h2 id="sec-madlib">Madlib</h2>${tool}</div>
+    <p class="small muted" style="margin:0 0 12px">${esc(m.pattern || "")}</p>${editor}
+    <details class="raw" style="margin-top:16px"><summary>Templates and slot rules</summary>
+    <dl class="rows">${rows.map(([k, x]) => `<dt>${esc(k)}</dt><dd>${madlibLine(x.template)}${x.original ? `<span class="note">Original: “${esc(x.original)}”</span>` : ""}</dd>`).join("")}</dl>
+    ${(m.slots || []).length ? `<p class="small" style="margin:16px 0 6px"><b>Slots</b></p><ul class="why-odds">${m.slots.map((x) => `<li><span class="slot">${esc(x.name)}</span> ${esc(x.rule || "")}${x.example ? ` <span class="faint">(original: “${esc(x.example)}”)</span>` : ""}</li>`).join("")}</ul>` : ""}
+    </details></section>`;
+}
+
+// ---------- madlib editor: a variable is one (slot, original value) pair; changing it rewrites every line that used it ----------
+const mlKey = (slot, value) => `${slot}|${String(value).toLowerCase()}`;
+const mlEdits = () => (S.mlEdits[S.open] = S.mlEdits[S.open] || {});
+const mlValue = (slot, value) => mlEdits()[mlKey(slot, value)] ?? value;
+function mlRender(line, edits, highlight) {
+  let i = 0;
+  const fill = (t) => t.replace(/\{\{([A-Z0-9_]+)(?::[A-Z_]+)?\}\}/g, () => {
+    const [slot, value] = line.uses[i++] || ["", ""];
+    const v = edits ? edits[mlKey(slot, value)] ?? value : value;
+    return highlight ? `<mark class="var" title="${esc(slot)}">${esc(v)}</mark>` : v;
+  });
+  const parts = line.template.split(/\[REPEAT[^\]]*\]([\s\S]*?)\[\/REPEAT\]/);
+  const text = parts.map((p, k) => (k % 2 ? Array.from({ length: line.count }, () => fill(highlight ? esc(p) : p).trim()).join(" ") : fill(highlight ? esc(p) : p))).join("");
+  return text.replace(/\s+/g, " ").trim();
+}
+function mlYours(sh) {
+  return sh.lines.map((l) => `<li><span class="lbl">${esc(l.label)}</span><span>${l.aligned ? mlRender(l, mlEdits(), true) : `<span class="free">${esc(l.text || "")}</span>`}</span></li>`).join("");
+}
+function mlPlain(sh) {
+  return sh.lines.map((l) => `${l.label}: ${l.aligned ? mlRender(l, mlEdits(), false) : l.text || ""}`).join("\n");
 }
 
 function skeleton() {
@@ -643,6 +694,9 @@ function planForm(teardowns) {
     </form>`;
 }
 
+// A madlib line: frame words as written, {{SLOTS}} highlighted.
+const madlibLine = (tpl) => tpl ? `<div class="madlib">${esc(tpl).replace(/\{\{([A-Z0-9_]+)(?::[A-Z_]+)?\}\}/g, '<span class="slot">$1</span>')}</div>` : "";
+
 // "DS__AHijRFc scene 2" -> a link that opens that outlier's teardown.
 function shotRef(ref) {
   const sc = String(ref).split(/\s+/)[0];
@@ -677,10 +731,13 @@ function planDay(p, i, rates, planId) {
         <li>${cap(o.confidence)} confidence: ${rates.reels} reels scanned, ${o.support[0]?.of ?? 0} teardowns. Treat it as a guide, not a forecast.</li>
       </ul>
       <section class="sec"><div class="sec-h"><h2>Hook</h2></div>
-        <dl class="rows"><dt>Say</dt><dd class="quote">“${fills(p.hook?.verbal)}”</dd><dt>On screen</dt><dd>${fills(p.hook?.written)}</dd><dt>Show</dt><dd>${fills(p.hook?.visual)}</dd></dl></section>
+        <dl class="rows"><dt>Say</dt><dd class="quote">“${fills(p.hook?.verbal)}”${madlibLine(p.hook?.verbal_template)}</dd>
+          <dt>On screen</dt><dd>${fills(p.hook?.written)}${madlibLine(p.hook?.written_template)}</dd>
+          <dt>Show</dt><dd>${fills(p.hook?.visual)}${madlibLine(p.hook?.visual_template)}</dd></dl></section>
+      ${p.madlib_source && outlier(p.madlib_source) ? `<p class="small muted" style="margin:0">This script fills the madlib of <button class="linkish" data-open="${esc(p.madlib_source)}">@${esc(outlier(p.madlib_source).username)}'s reel</button>. Open it to see the original variables and change them.</p>` : ""}
       <section class="sec"><div class="sec-h"><h2>Script</h2><span class="small muted">${p.length_s ? `about ${p.length_s} s · ` : ""}${esc(cap(label(p.complexity)))} ${esc(label(p.delivery))}${p.story_type ? ` · ${esc(label(p.story_type))} story` : ""}</span></div>
         <ol class="script">${(p.beats || []).map((b) => `<li><span class="beat ${esc(b.label)}">${esc(b.label)}</span><div>
-          <div class="say">${fills(b.say)}</div>
+          ${madlibLine(b.template)}<div class="say">${fills(b.say)}</div>
           <div class="dir">${b.show ? `<b>Film:</b> ${fills(b.show)}` : ""}${b.show && b.edit ? " · " : ""}${b.edit ? `<b>Edit:</b> ${fills(b.edit)}` : ""}</div></div></li>`).join("")}</ol></section>
       ${(p.shots || []).length ? `<section class="sec"><div class="sec-h"><h2>Shot list</h2><span class="small muted">SEALCaM · one shot per setup or cut</span></div>
         <ol class="shots">${p.shots.map((sh, k) => `<li class="shot">
@@ -890,7 +947,7 @@ document.addEventListener("click", async (ev) => {
     new: () => { S.view = "new"; S.open = null; render(); },
     "cancel-new": () => { S.view = "research"; render(); },
     run: startRun, stop: stopRun,
-    teardown: () => startTeardown(S.open), ai: () => startTeardown(S.open, "ai"), scenes: () => startTeardown(S.open, "scenes"),
+    teardown: () => startTeardown(S.open), ai: () => startTeardown(S.open, "ai"), scenes: () => startTeardown(S.open, "scenes"), madlib: () => startTeardown(S.open, "madlib"),
     "add-template": async () => {
       const sc = el.dataset.shortcode;
       await api(`/api/projects/${S.projectId}/outliers`, { method: "POST", body: { shortcode: sc } });
@@ -898,6 +955,8 @@ document.addEventListener("click", async (ev) => {
       await openTeardown(sc);
       await startTeardown(sc);
     },
+    "copy-madlib": () => copyText(mlPlain(S.td.data.madlib_sheet), "Your version copied"),
+    "reset-madlib": () => { S.mlEdits[S.open] = {}; renderMain(); },
     "copy-brief": () => copyText(currentPlan()?.export?.posts?.[el.dataset.slot]?.markdown, "Brief copied"),
     "copy-week": () => copyText(currentPlan()?.export?.week?.markdown, "Week copied"),
     save: () => setOutlierStatus(S.open, "saved"), unsave: () => setOutlierStatus(S.open, "new"), dismiss: () => setOutlierStatus(S.open, "dismissed"),
@@ -955,6 +1014,12 @@ document.addEventListener("change", async (ev) => {
 });
 
 document.addEventListener("input", (ev) => {
+  if (ev.target.dataset.mlkey !== undefined) {  // madlib editor: update the rendered lines only, so the input keeps focus
+    mlEdits()[ev.target.dataset.mlkey] = ev.target.value;
+    const sh = S.td?.data?.madlib_sheet;
+    if (sh) $("#ml-yours").innerHTML = mlYours(sh);
+    return;
+  }
   if (ev.target.dataset.field && ev.target.type !== "checkbox") S.edits[ev.target.dataset.field] = ev.target.value === "" ? null : ev.target.value;
   const form = ev.target.closest("#new-form");
   if (form) estimate(form);

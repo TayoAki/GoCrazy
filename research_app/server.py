@@ -16,7 +16,7 @@ from starlette.background import BackgroundTask
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import annotate, backup, brief, config, db, doubledown, media, pipeline, planner, teardown
+from . import annotate, backup, brief, config, db, doubledown, madlibs, media, pipeline, planner, teardown
 from .config import DATA, DEFAULT_SETTINGS, MEDIA
 from .scrapecreators import ScrapeCreators, ScrapeError
 
@@ -377,6 +377,17 @@ def start_teardown(shortcode: str, project_id: int):
     return {"ok": True}
 
 
+@app.post("/api/teardowns/{shortcode}/madlib")
+def make_madlib(shortcode: str, project_id: int):
+    if not config.openrouter_key():
+        raise HTTPException(400, "OPENROUTER_API_KEY is not set")
+    try:
+        teardown.start_madlib(shortcode, project_id)
+    except RuntimeError as e:
+        raise HTTPException(409, str(e))
+    return {"ok": True}
+
+
 @app.post("/api/teardowns/{shortcode}/scenes")
 def break_down_scenes(shortcode: str, project_id: int):
     if not config.openrouter_key():
@@ -405,8 +416,10 @@ def read_teardown(shortcode: str):
         row = conn.execute("SELECT * FROM teardowns WHERE shortcode=?", (shortcode,)).fetchone()
     if not row:
         return {"status": "none"}
-    return {"status": row["status"], "error": row["error"], "updated_at": row["updated_at"],
-            "data": json.loads(row["data"]) if row["data"] else None}
+    data = json.loads(row["data"]) if row["data"] else None
+    if data and data.get("madlib"):
+        data["madlib_sheet"] = madlibs.reference_sheet(data["madlib"])  # its original variables, lined up
+    return {"status": row["status"], "error": row["error"], "updated_at": row["updated_at"], "data": data}
 
 
 @app.put("/api/teardowns/{shortcode}")

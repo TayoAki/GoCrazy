@@ -14,7 +14,7 @@ from datetime import date, timedelta
 
 import requests
 
-from . import db
+from . import db, teardown
 from .ai import SEALCAM, SEALCAM_KEYS
 from .annotate import BEATS, VOCAB
 from .config import openrouter_key
@@ -78,11 +78,18 @@ the proven outliers it is based on.
 5. Beat labels: {beats}. CTA mechanic: {cta_mechanic}.
 6. "show", "edit" and the visual hook recreate the source teardowns' visuals (their visual_hook, format and set): the same
    set, the same people and arrangement, the same overlays and on-screen text pattern, with this script's own items.
+7. Write the script by FILLING THE MADLIB of the source you follow most closely (SOURCE MADLIBS): take its spoken lines
+   beat by beat, keep every frame word, the order, the rhythm and the punctuation exactly, and replace each slot with
+   this creator's content following the slot's rule. Expand a REPEAT block into that many filled lines (one more or
+   one fewer is fine). Fill the source's verbal, written and visual hook madlibs the same way. Rule 2 still applies
+   inside a slot: a fact you don't have becomes a [[placeholder]]. Put the madlib line you filled in "template".
 
 Reply with ONLY a JSON object:
-{{"hook": {{"verbal": "the first sentence spoken (≤15 words)", "written": "on-screen text in the first 3 s (≤7 words)",
-          "visual": "one filmable action for the first 3 s"}},
- "beats": [{{"label": BEAT, "say": "what to say, in full sentences, in the creator's voice",
+{{"madlib_source": "the teardown id whose madlib you filled",
+ "hook": {{"verbal": "the first sentence spoken (≤15 words)", "written": "on-screen text in the first 3 s (≤7 words)",
+          "visual": "one filmable action for the first 3 s", "verbal_template": str, "written_template": str,
+          "visual_template": str}},
+ "beats": [{{"label": BEAT, "template": "the madlib line this beat fills", "say": "what to say, in full sentences, in the creator's voice",
             "show": "what to film", "edit": "editing note"}}],
  "cta": {{"mechanic": str, "line": "the exact closing line"}},
  "length_s": int, "caption_first_line": str, "hashtags": [3-5 strings without #],
@@ -109,7 +116,8 @@ Rules for the shot list:
 6. Write each SEALCaM field as an explicit instruction for setting the shot up, in the terms above. SEALCaM is visual
    only: no sound, music or voice in any field.
 7. say: the exact script words spoken during this shot (split a beat's line across its shots), or null.
-   on_screen_text: the text to burn in, or null. reference: the scene it borrows from, as "<id> scene <n>", or null.
+   on_screen_text: the text to burn in, or null; fill the reference's on_screen_madlib, keeping its frame words.
+   reference: the scene it borrows from, as "<id> scene <n>", or null.
 8. Beat labels: {beats}.
 
 Reply with ONLY a JSON object: {{"shots": [{{"beat": str, "duration_s": number, "say": str|null,
@@ -284,14 +292,47 @@ def reference_scenes(shortcodes):
     return out
 
 
+def source_madlibs(shortcodes, model):
+    """Madlibs of the given teardowns, making any that are missing. Returns ({id: templates without the originals}, cost)."""
+    out, cost = {}, 0.0
+    with db.connect() as conn:
+        rows = conn.execute(f"SELECT shortcode, data FROM teardowns WHERE status='done' AND shortcode IN "
+                            f"({','.join('?' * len(shortcodes))})", list(shortcodes)).fetchall() if shortcodes else []
+
+    def one(row):
+        data = json.loads(row["data"])
+        if not data.get("madlib"):
+            try:
+                data = teardown.apply_madlib(data, model)
+            except Exception:
+                return row["shortcode"], None, 0
+            with db.connect() as conn:
+                conn.execute("UPDATE teardowns SET data=?, updated_at=? WHERE shortcode=?", (json.dumps(data), db.now(), row["shortcode"]))
+            return row["shortcode"], data["madlib"], data["madlib"].get("cost") or 0
+        return row["shortcode"], data["madlib"], 0
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        for sc, m, c in pool.map(one, rows):
+            cost += c
+            if m:  # the planner gets templates and slot rules only, not the original lines
+                out[sc] = {"pattern": m.get("pattern"),
+                           "hooks": {k: (v or {}).get("template") for k, v in (m.get("hooks") or {}).items()},
+                           "spoken": [{"beat": x.get("beat"), "template": x.get("template")} for x in m.get("spoken") or []],
+                           "on_screen": [x.get("template") for x in m.get("on_screen") or []],
+                           "caption": (m.get("caption") or {}).get("template"), "slots": m.get("slots")}
+    return out, cost
+
+
 def add_shots(posts, context, model):
     """Fill post["shots"] for each post (in parallel). Returns the cost. A failed post gets post["shots_error"]."""
-    refs = reference_scenes({s for p in posts for s in p.get("source_outliers") or []})
+    ids = {s for p in posts for s in p.get("source_outliers") or []}
+    refs = reference_scenes(ids)
+    madlibs, _ = source_madlibs(ids, model)
     system = SHOTS_SYSTEM.format(beats=", ".join(BEATS))
 
     def one(post):
         script = {k: post.get(k) for k in ("title", "format", "angle", "delivery", "complexity", "length_s", "hook", "beats", "cta")}
-        sources = {s: refs[s] for s in post.get("source_outliers") or [] if s in refs}
+        sources = {s: {**refs[s], "on_screen_madlib": (madlibs.get(s) or {}).get("on_screen")} for s in post.get("source_outliers") or [] if s in refs}
         try:
             got, c = _chat_json(model, system, context + f"SCRIPT:\n{json.dumps(script, ensure_ascii=False)}\n\n"
                                 f"REFERENCE SCENES (SEALCaM, by outlier id):\n{json.dumps(sources, ensure_ascii=False) if sources else '(none)'}",
@@ -373,15 +414,22 @@ def _generate(project_id, about, followers, start_date, posts, model, teardowns)
     if len(by_slot) < len(slots):
         raise RuntimeError(f"The outline had {len(by_slot)} of {len(slots)} posts")
 
+    # Each source needs a madlib of its own script: make the missing ones now (about 4 cents each).
+    used = {s for p in outline.get("posts", []) for s in p.get("source_outliers") or []}
+    madlibs, c = source_madlibs(used, model)
+    cost += c
+
     # Stage 2: each post written in full from its own sources, in parallel.
     teardown_by_id = {t["id"]: t for t in teardowns}
 
     def detail(slot):
         post = by_slot[slot["slot"]]
         sources = [teardown_by_id[s] for s in post.get("source_outliers") or [] if s in teardown_by_id] or teardowns[:3]
+        templates = {s: madlibs[s] for s in post.get("source_outliers") or [] if s in madlibs}
         return _chat_json(model, DETAIL_SYSTEM.format(beats=", ".join(BEATS), **vocab),
                           context + f"SLOT: {json.dumps(slot)}\nOUTLINE: {json.dumps(post, ensure_ascii=False)}\n\n"
-                          f"SOURCE TEARDOWNS:\n{json.dumps(sources, ensure_ascii=False)}", 0.7)
+                          f"SOURCE TEARDOWNS:\n{json.dumps(sources, ensure_ascii=False)}\n\n"
+                          f"SOURCE MADLIBS (by teardown id):\n{json.dumps(templates, ensure_ascii=False) if templates else '(none)'}", 0.6)
 
     with ThreadPoolExecutor(max_workers=4) as pool:
         details = list(pool.map(detail, slots))

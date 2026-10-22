@@ -260,3 +260,63 @@ def breakdown(data, model):
     if not match:
         raise RuntimeError("The model did not return JSON")
     return json.loads(match.group(0)).get("scenes") or [], body.get("usage") or {}
+
+
+# ---------- madlibs (playbook Phase 4) ----------
+
+SLOT_TYPES = ["AUDIENCE", "OUTCOME", "PAIN", "MISTAKE", "MYTH", "TRUTH", "METHOD_NAME", "NUMBER", "ORDINAL", "ITEM",
+              "STEP_ACTION", "EXAMPLE", "TIMEFRAME", "COST", "RESULT", "PROOF", "STORY_MOMENT", "EMOTION", "CONTRAST_A",
+              "CONTRAST_B", "QUESTION", "KEYWORD", "FREEBIE", "OFFER", "TOPIC", "NICHE", "PERSON"]
+
+MADLIB_SYSTEM = """You turn one viral short-form video into fill-in-the-blank templates (madlibs), so another creator can
+reuse its exact script, word for word in its frame, with their own content in the blanks.
+
+1. Keep the frame words exactly: the words that make the pattern (openers such as "Remember," or "Is it possible to",
+   list and order markers, contrast words such as "but" and "instead", comparison words such as "looks" or "is",
+   reveal phrases, CTA mechanics such as "comment", "save", "follow"). Keep the sentence order, rhythm and punctuation.
+2. Replace every run of content words (the specific items, colours, garments, places, prices, the numbers that describe
+   their result, names, brands, products and claims) with one slot written {{NAME:TYPE}}. NAME is UPPER_SNAKE_CASE and
+   names the role (e.g. BASE_COLOUR, PLAIN_RESULT); reuse the same NAME when the same thing comes back.
+   TYPE is one of: """ + ", ".join(SLOT_TYPES) + """. Use ITEM for garments, colours, objects and places.
+3. When the same line shape repeats (a list), write it once inside [REPEAT {{N:NUMBER}} times] ... [/REPEAT], where N
+   is how many times the original repeats it.
+4. Write a fill rule for every slot: what goes there and at most how many words, with an example from the original.
+5. No content word from the original may appear in a template: the original's words live only in "original" and in the
+   slot examples.
+
+Template the spoken script beat by beat (from the transcript), the verbal, written (on-screen) and visual hooks, the
+on-screen text pattern of the scenes, and the first line of the caption. If there is no speech, set "spoken" to [] and
+template the on-screen text instead.
+
+Reply with ONLY a JSON object:
+{"pattern": "the pattern in plain words",
+ "hooks": {"verbal": {"original": str|null, "template": str|null}, "written": {"original": str|null, "template": str|null},
+           "visual": {"original": str|null, "template": str|null}},
+ "spoken": [{"beat": str, "original": str, "template": str}],
+ "on_screen": [{"original": str, "template": str}],
+ "caption": {"original": str|null, "template": str|null},
+ "slots": [{"name": str, "type": str, "rule": str, "example": str}]}"""
+
+
+def madlib(data, model):
+    """Fill-in-the-blank templates of the reel's own script, hooks, on-screen text and caption. Returns (madlib, usage)."""
+    f = {k: v.get("value") for k, v in data["fields"].items()}
+    scenes = "\n".join(f"SCENE {sc['i']} [{sc.get('beat') or '?'}] said: {sc.get('said') or '(nothing)'} | on screen: "
+                       f"{sc.get('on_screen_text') or '(none)'}" for sc in data.get("scenes") or [])
+    text = (f"BEATS: {f.get('structure_pattern') or 'unknown'}\n"
+            f"VERBAL HOOK: {f.get('verbal_hook') or '(none)'}\nWRITTEN HOOK: {f.get('written_hook') or '(none)'}\n"
+            f"VISUAL HOOK: {f.get('visual_hook') or '(none)'}\n\nTRANSCRIPT:\n{_transcript_text(data.get('transcript'))[:6000]}\n\n"
+            f"SCENES (beat, words spoken, on-screen text):\n{scenes[:6000] or '(no scenes)'}\n\n"
+            f"CAPTION (first line): {(data.get('caption') or '').split(chr(10))[0][:300]}")
+    resp = requests.post(URL, timeout=300, headers={"Authorization": f"Bearer {openrouter_key()}"}, json={
+        "model": model, "temperature": 0.2, "max_tokens": 8000, "usage": {"include": True},
+        "response_format": {"type": "json_object"},
+        "messages": [{"role": "system", "content": MADLIB_SYSTEM}, {"role": "user", "content": text}],
+    })
+    body = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+    if resp.status_code != 200 or "choices" not in body:
+        raise RuntimeError(f"OpenRouter {resp.status_code}: {(body.get('error') or {}).get('message') or resp.text[:200]}")
+    match = re.search(r"\{.*\}", body["choices"][0]["message"]["content"] or "", re.S)
+    if not match:
+        raise RuntimeError("The model did not return JSON")
+    return json.loads(match.group(0)), body.get("usage") or {}

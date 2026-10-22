@@ -58,6 +58,37 @@ def apply_scenes(data, model):
     return data
 
 
+def apply_madlib(data, model):
+    """Fill-in-the-blank templates of the reel's own script, hooks, on-screen text and caption (playbook Phase 4)."""
+    result, usage = ai.madlib(data, model)
+    data["madlib"] = {**result, "model": model, "cost": usage.get("cost")}
+    data["notes"] = [n for n in data.get("notes") or [] if not n.startswith("Madlib failed")]
+    return data
+
+
+def start_madlib(shortcode, project_id):
+    with db.connect() as conn:
+        row = conn.execute("SELECT status, data FROM teardowns WHERE shortcode=?", (shortcode,)).fetchone()
+        if not row or row["status"] != "done":
+            raise RuntimeError("Tear the outlier down first.")
+        conn.execute("UPDATE teardowns SET status='running', updated_at=? WHERE shortcode=?", (db.now(), shortcode))
+    threading.Thread(target=_run_madlib, args=(shortcode, project_id, json.loads(row["data"])), daemon=True).start()
+
+
+def _run_madlib(shortcode, project_id, data):
+    error = None
+    try:
+        with db.connect() as conn:
+            settings = db.project_settings(conn.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone())
+        data = apply_madlib(data, settings["ai_model"])
+    except Exception as e:
+        error = str(e)
+    with db.connect() as conn:
+        conn.execute("UPDATE teardowns SET status='done', data=?, error=?, updated_at=? WHERE shortcode=?",
+                     (json.dumps(data), error, db.now(), shortcode))
+    db.log(project_id, "error" if error else "success", f"Madlib {'failed' if error else 'done'} for {shortcode}" + (f": {error}" if error else ""))
+
+
 def start_scenes(shortcode, project_id):
     """Scene-by-scene SEALCaM breakdown for an existing teardown: fetches the video again (the post lookup is cached)."""
     with db.connect() as conn:
@@ -254,4 +285,8 @@ def build(shortcode, project_id):
                 data = apply_scenes(data, settings["ai_model"])
             except Exception as e:
                 notes.append(f"Scene breakdown failed: {e}")
+        try:
+            data = apply_madlib(data, settings["ai_model"])
+        except Exception as e:
+            notes.append(f"Madlib failed: {e}")
     return data

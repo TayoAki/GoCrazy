@@ -7,7 +7,7 @@ import json
 import re
 from datetime import date
 
-from . import db
+from . import db, madlibs
 from .ai import SEALCAM_KEYS
 from .planner import reference_scenes
 
@@ -54,7 +54,7 @@ def _cards(shortcodes):
     for r in rows:
         d = json.loads(r["data"])
         out[r["shortcode"]] = {"fields": {k: v.get("value") for k, v in d["fields"].items()}, "music": d.get("music") or {},
-                               "caption": d.get("caption")}
+                               "caption": d.get("caption"), "madlib": d.get("madlib")}
     return out
 
 
@@ -95,6 +95,27 @@ def _card_markdown(src, card):
              ("Audio", audio),
              ("Caption", f"“{caption}”" if caption else None)]
     return [f"- **{k}:** {v}" for k, v in lines if v]
+
+
+def _madlib_markdown(m, h):
+    """The reference's own script as fill-in-the-blank templates: original line, then its madlib."""
+    out = [f"{h}## Madlib", "", f"Pattern: {m.get('pattern')}", ""]
+    rows = [(f"{k.capitalize()} hook", v) for k, v in (m.get("hooks") or {}).items() if v and v.get("template")]
+    rows += [(x.get("beat") or "Line", x) for x in m.get("spoken") or []]
+    rows += [("On screen", x) for x in m.get("on_screen") or []]
+    if (m.get("caption") or {}).get("template"):
+        rows.append(("Caption", m["caption"]))
+    for label, x in rows:
+        out += [f"- **{label}:** `{x.get('template')}`"] + ([f"  - Original: “{x['original']}”"] if x.get("original") else [])
+    if m.get("slots"):
+        out += ["", "Slots:", ""] + [f"- `{{{{{s.get('name')}:{s.get('type')}}}}}`: {s.get('rule')}" + (f" (original: “{s['example']}”)" if s.get("example") else "")
+                                     for s in m["slots"]]
+    variables = madlibs.reference_sheet(m)["variables"]
+    if variables:
+        out += ["", "Variables (the original's values; write yours in the last column, or change them in the app's madlib editor):", "",
+                "| Variable | Original value | Your value |", "|---|---|---|"]
+        out += [f"| `{v['slot']}` | {v['value'].replace('|', '/')} | |" for v in variables]
+    return out
 
 
 def _handles(text, sources):
@@ -145,13 +166,22 @@ def post_markdown(post, rates, sources, refs=None, level=1, cards=None):
         out += [f"{h}# Before you film", "", "Replace every [[placeholder]] in the script with your own facts:", ""]
         out += [f"- {t(n)}" for n in needs] + [""]
 
-    out += [f"{h}# Script", "", f"{h}## Hook (first 3 seconds)", "",
-            f"- **Say:** “{t(hook.get('verbal'))}”",
-            f"- **On screen:** {t(hook.get('written'))}",
-            f"- **Show:** {t(hook.get('visual'))}", "",
-            f"{h}## Beats", ""]
+    madlib_from = sources.get(post.get("madlib_source") or "")
+    out += [f"{h}# Script", ""]
+    if madlib_from:
+        out += [f"The script fills the madlib of @{madlib_from['username']}'s reel ({madlib_from['url']}): each line keeps its "
+                "frame words and fills its slots with this creator's content.", ""]
+    out += [f"{h}## Hook (first 3 seconds)", ""]
+    for label, key in (("Say", "verbal"), ("On screen", "written"), ("Show", "visual")):
+        value = t(hook.get(key))
+        out.append(f"- **{label}:** " + (f"“{value}”" if key == "verbal" else value))
+        if hook.get(f"{key}_template"):
+            out.append(f"  - Madlib: `{hook[key + '_template']}`")
+    out += ["", f"{h}## Beats", ""]
     for i, beat in enumerate(post.get("beats") or [], 1):
         out.append(f"{i}. **{beat.get('label')}**")
+        if beat.get("template"):
+            out.append(f"   - Madlib: `{beat['template']}`")
         out += [f"   - {k}: {t(beat.get(key))}" for k, key in (("Say", "say"), ("Film", "show"), ("Edit", "edit")) if beat.get(key)]
     tags = " ".join("#" + str(x).lstrip("#") for x in post.get("hashtags") or [])
     cta_kind = ", ".join(dict.fromkeys(x for x in (_label(post.get("cta_type")), _label(cta.get("mechanic"))) if x))
@@ -195,6 +225,8 @@ def reference_markdown(src, ref, level=1, card=None):
     out = [f"{h}# Reference breakdown: @{src['username']} ({src['ratio']}×)", "", src["url"], ""]
     if card:
         out += _card_markdown(src, card) + [""]
+        if card.get("madlib"):
+            out += _madlib_markdown(card["madlib"], h) + [""]
     out += ["Scene by scene in SEALCaM. A scene that continues the same shot is a segment of a long hold.", ""]
     for sc in ref["scenes"]:
         how = "hard cut" if sc.get("cut", True) else "same shot continues"
