@@ -4,3 +4,5 @@ __pycache__/
 
 # Full transcripts are the channel owner's content; keep them local, not in this public repo.
 transcripts/
+# Quotes roughly a quarter of the transcripts verbatim, so it stays local like transcripts/.
+RECIPE_BOOK.md
