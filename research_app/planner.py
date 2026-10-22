@@ -570,7 +570,7 @@ def _generate(project_id, about, followers, start_date, posts, model, teardowns)
     cost += add_shots(planned, context, model, about)
     mix = Counter(p["format"] for p in planned)
     return {"posts": planned, "rates": rates, "teardowns_used": len(teardowns), "tier": tier(followers),
-            "model": model, "cost": round(cost, 4), "format_mix": mix.most_common(),
+            "model": llm.label(model), "cost": round(cost, 4), "format_mix": mix.most_common(),
             "method": ("Odds = this niche's base rate (share of scanned reels that beat each multiple of the creator's "
                        "followers) × an evidence multiplier (1 + 2 × the average share of torn-down outliers that use "
                        "the same hook pattern, format, angle, video type, structure and delivery; +0.25 when its source "
