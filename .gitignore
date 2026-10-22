@@ -12,3 +12,6 @@ work/
 
 # Research app local data (database, covers, frames)
 data/
+
+# Static snapshot exports (contain research data)
+site/

@@ -70,6 +70,15 @@ CREATE TABLE IF NOT EXISTS teardowns (
     error TEXT,
     updated_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS plans (
+    id INTEGER PRIMARY KEY,
+    project_id INTEGER NOT NULL,
+    status TEXT NOT NULL,            -- running | done | failed
+    input TEXT,                      -- JSON: about, followers, start_date, posts, model
+    data TEXT,                       -- JSON plan with computed odds
+    error TEXT,
+    created_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS events (
     id INTEGER PRIMARY KEY,
     project_id INTEGER,
@@ -103,6 +112,7 @@ def init():
         # A run left "running" by a server restart can never finish.
         conn.execute("UPDATE runs SET status='stopped', message='Server restarted', finished_at=? WHERE status='running'", (now(),))
         conn.execute("UPDATE teardowns SET status='failed', error='Server restarted' WHERE status='running'")
+        conn.execute("UPDATE plans SET status='failed', error='Server restarted' WHERE status='running'")
 
 
 def log(project_id, level, message):

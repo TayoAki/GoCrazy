@@ -44,5 +44,7 @@ for a client's niche (OpenRouter), with optional rendering (Hypit). In this repo
 
 [`research_app/`](research_app/README.md) is a local web app for the research step: it finds outliers in a niche with
 ScrapeCreators (views ÷ followers ≥ 5), then tears each one down (transcript, video frames, cut count) and has an
-OpenRouter vision model fill in the teardown card for review. Run it with `python -m research_app` and open
-http://127.0.0.1:8000.
+OpenRouter vision model fill in the teardown card for review. From those teardowns it plans a week of posts (full script,
+hook, CTA and what to film for each) with odds of virality computed from the scanned reels. Run it with
+`python -m research_app` and open http://127.0.0.1:8000. `python -m research_app.export_static` builds a read-only copy you
+can host on Vercel.

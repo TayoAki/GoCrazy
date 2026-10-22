@@ -10,7 +10,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import annotate, config, db, pipeline, teardown
+from . import annotate, config, db, pipeline, planner, teardown
 from .config import DEFAULT_SETTINGS, MEDIA
 from .scrapecreators import ScrapeCreators, ScrapeError
 
@@ -46,6 +46,13 @@ class StatusPatch(BaseModel):
 
 class FieldsPatch(BaseModel):
     fields: dict[str, Any]
+
+
+class PlanIn(BaseModel):
+    about: str = ""
+    followers: int | None = None
+    start_date: str | None = None
+    posts: int = 7
 
 
 def clean_keywords(keywords):
@@ -220,10 +227,14 @@ def list_outliers(project_id: int, status: str = "active", sort: str = "ratio"):
         item = {k: r[k] for k in r.keys() if k != "teardown"}
         item["cover"] = cover_url(r["shortcode"])
         if r["teardown"]:
-            f = json.loads(r["teardown"])["fields"]
-            item["hook"] = f.get("verbal_hook", {}).get("value")
-            item["tags"] = [v for v in (f.get("hook_pattern", {}).get("value"), f.get("format", {}).get("value"),
-                                        "series" if f.get("is_series", {}).get("value") else None) if v and v != "niche_specific"]
+            data = json.loads(r["teardown"])
+            f = data["fields"]
+            value = lambda k: (f.get(k) or {}).get("value")
+            item["td"] = {k: value(k) for k in ("verbal_hook", "written_hook", "hook_pattern", "angle", "video_type", "format",
+                                                 "delivery", "complexity", "cta_mechanic", "is_series", "content_type", "funnel")}
+            item["td"]["review"] = sum(1 for v in f.values() if v.get("source") == "needs_review")
+            item["td"]["ai"] = sum(1 for v in f.values() if v.get("source") == "ai")
+            item["sponsored"] = any("Sponsored" in n for n in data.get("notes", []))
         items.append(item)
     return items
 
@@ -318,6 +329,40 @@ def edit_teardown(shortcode: str, body: FieldsPatch):
             data["fields"][key] = {"value": value, "source": "human", "note": None}
         conn.execute("UPDATE teardowns SET data=?, updated_at=? WHERE shortcode=?", (json.dumps(data), db.now(), shortcode))
     return data
+
+
+@app.post("/api/projects/{project_id}/plans")
+def create_plan(project_id: int, body: PlanIn):
+    if not config.openrouter_key():
+        raise HTTPException(400, "OPENROUTER_API_KEY is not set")
+    with db.connect() as conn:
+        settings = db.project_settings(get_project(conn, project_id))
+    try:
+        plan_id = planner.start(project_id, body.about[:4000], body.followers, body.start_date,
+                                max(1, min(7, body.posts)), settings["ai_model"])
+    except RuntimeError as e:
+        raise HTTPException(409, str(e))
+    return {"plan_id": plan_id}
+
+
+@app.get("/api/projects/{project_id}/plans")
+def list_plans(project_id: int):
+    with db.connect() as conn:
+        rows = conn.execute("SELECT * FROM plans WHERE project_id=? ORDER BY id DESC", (project_id,)).fetchall()
+    return [{"id": r["id"], "status": r["status"], "error": r["error"], "created_at": r["created_at"],
+             "input": json.loads(r["input"] or "{}"), "data": json.loads(r["data"]) if r["data"] else None} for r in rows]
+
+
+@app.delete("/api/plans/{plan_id}")
+def delete_plan(plan_id: int):
+    with db.connect() as conn:
+        conn.execute("DELETE FROM plans WHERE id=?", (plan_id,))
+    return {"ok": True}
+
+
+@app.get("/api/projects/{project_id}/rates")
+def rates(project_id: int):
+    return planner.base_rates(project_id)
 
 
 @app.get("/api/events")
