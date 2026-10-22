@@ -109,7 +109,8 @@ def _run(run_id, project_id, stop):
 
 
 def _search_phase(run_id, project_id, client, keywords, settings, stats, check):
-    found = {}
+    found = {h: {"keywords": set(), "full_name": None, "is_verified": None, "study": True}
+             for h in settings.get("study_accounts") or []}
     jobs = [(kw, page) for kw in keywords for page in range(1, settings["search_pages"] + 1)]
     exhausted = set()
     for i, (kw, page) in enumerate(jobs):
@@ -184,7 +185,10 @@ def _search_phase(run_id, project_id, client, keywords, settings, stats, check):
 
 def _scan_phase(run_id, project_id, client, found, settings, stats, check, stop):
     # Creators surfaced by more keywords are more central to the niche, so scan them first.
-    ranked = sorted(found.items(), key=lambda kv: (-len(kv[1]["keywords"]), kv[0]))[: settings["max_creators"]]
+    # Accounts you named go first and don't count against max_creators.
+    study = [kv for kv in found.items() if kv[1].get("study")]
+    others = [kv for kv in found.items() if not kv[1].get("study")]
+    ranked = study + sorted(others, key=lambda kv: (-len(kv[1]["keywords"]), kv[0]))[: settings["max_creators"]]
     if not ranked:
         return
     lock = threading.Lock()
@@ -240,15 +244,16 @@ def _scan_creator(client, project_id, username, info, settings, check):
     if not followers:
         set_status("error")
         return result
-    if followers < settings["min_followers"]:
-        set_status("too_small")
-        return result
-    if followers > settings["max_followers"]:
-        set_status("too_big")
-        return result
+    if not info.get("study"):  # an account you named is scanned whatever its size
+        if followers < settings["min_followers"]:
+            set_status("too_small")
+            return result
+        if followers > settings["max_followers"]:
+            set_status("too_big")
+            return result
 
     max_id = None
-    for _ in range(settings["reel_pages"]):
+    for _ in range(max(settings["reel_pages"], 8) if info.get("study") else settings["reel_pages"]):
         check()
         try:
             items, max_id = client.user_reels(username, max_id)
@@ -265,7 +270,7 @@ def _scan_creator(client, project_id, username, info, settings, check):
         if not items or not max_id:
             break
 
-    keyword = sorted(info["keywords"])[0] if info.get("keywords") else None
+    keyword = f"@{username}" if info.get("study") else sorted(info["keywords"])[0] if info.get("keywords") else None
     with db.connect() as conn:
         conn.execute("UPDATE creators SET reels_fetched_at=? WHERE username=?", (db.now(), username))
         for reel in conn.execute("SELECT shortcode, views, taken_at FROM reels WHERE username=? AND views IS NOT NULL", (username,)):

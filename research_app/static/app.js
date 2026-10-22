@@ -701,12 +701,14 @@ function bankView() {
 function newResearchView() {
   const d = S.vocab?.defaults || {};
   const num = (k, lbl, attrs = "") => `<label class="field"><span>${lbl}</span><input type="number" name="${k}" value="${esc(d[k])}" ${attrs}></label>`;
-  return `<div class="page-head"><h1>New research</h1><p>Pick keywords for your niche. The app finds creators with 1K–500K followers and keeps their reels that got 5× or more views than followers.</p></div>
+  return `<div class="page-head"><h1>New research</h1><p>Pick keywords for your niche, and name any accounts you want to study. The app finds creators with 1K–500K followers and keeps their reels that got 5× or more views than followers.</p></div>
     <form id="new-form" class="form">
       <label class="field"><span>Project name</span><input type="text" name="name" required placeholder="e.g. Dog training"></label>
       <label class="field"><span>Niche</span><input type="text" name="niche" placeholder="e.g. Puppy training for first-time owners"><span class="help">Optional. The planner uses it.</span></label>
       <label class="field"><span>Keywords</span><textarea name="keywords" rows="5" required placeholder="dog training&#10;crate training puppy&#10;puppy biting&#10;dog trainer"></textarea>
         <span class="help">One per line: your niche, each sub-niche, your job title, and a variation or two.</span></label>
+      <label class="field"><span>Accounts to study</span><input type="text" name="study_accounts" placeholder="e.g. @stylegenai @boopwithme">
+        <span class="help">Optional. Always scanned, deeper and whatever their size, with the same outlier test.</span></label>
       <details class="more"><summary>Thresholds and budget</summary>
         <div class="form" style="gap:12px">
           <div class="grid-3">${num("min_ratio", "Min ratio", 'step="0.5"')}${num("min_followers", "Min followers")}${num("max_followers", "Max followers")}</div>
@@ -737,6 +739,7 @@ function settingsView() {
       <label class="field"><span>Name</span><input type="text" name="name" value="${esc(p.name)}"></label>
       <label class="field"><span>Niche</span><input type="text" name="niche" value="${esc(p.niche || "")}"></label>
       <label class="field"><span>Keywords</span><textarea name="keywords" rows="4">${esc(p.keywords.join("\n"))}</textarea><span class="help">One per line</span></label>
+      <label class="field"><span>Accounts to study</span><input type="text" name="study_accounts" value="${esc((p.settings.study_accounts || []).map((h) => "@" + h).join(" "))}"></label>
       <div class="grid-3">${num("min_ratio", "Min ratio", 0.5)}${num("min_followers", "Min followers")}${num("max_followers", "Max followers")}</div>
       <div class="grid-3">${num("search_pages", "Search pages per keyword")}${num("reel_pages", "Reel pages per creator")}${num("max_creators", "Max creators")}</div>
       <div class="grid-3">${num("credit_budget", "Credit budget per run")}${num("max_age_days", "Max age (days)")}<div></div></div>
@@ -895,10 +898,11 @@ function estimate(form) {
   // Reel-search pages plus one account search per keyword; each surfaces roughly 5-7 new creators.
   const searches = kws * (Number(v.search_pages || 1) + 1);
   const creators = Math.min(Number(v.max_creators || 30), searches * 6);
-  const est = searches + creators * (1 + Number(v.reel_pages || 2));
+  const est = searches + creators * (1 + Number(v.reel_pages || 2)) + handles(v.study_accounts).length * 9;
   $("#estimate").textContent = kws ? `About ${est} credits (cap ${v.credit_budget}) · roughly ${Math.ceil((searches * 12 + creators * 6) / 60)} min` : "Add keywords to see a credit estimate";
 }
 
+const handles = (text) => [...new Set(String(text || "").split(/[\s,]+/).map((h) => h.replace(/^@/, "").trim().toLowerCase()).filter(Boolean))];
 const NUMERIC = ["min_ratio", "min_followers", "max_followers", "search_pages", "reel_pages", "max_creators", "credit_budget", "max_age_days"];
 document.addEventListener("submit", async (ev) => {
   const form = ev.target;
@@ -906,7 +910,7 @@ document.addEventListener("submit", async (ev) => {
   try {
     if (form.id === "new-form") {
       const v = Object.fromEntries(new FormData(form));
-      const settings = Object.fromEntries(NUMERIC.map((k) => [k, Number(v[k])]));
+      const settings = { ...Object.fromEntries(NUMERIC.map((k) => [k, Number(v[k])])), study_accounts: handles(v.study_accounts) };
       const p = await api("/api/projects", { method: "POST", body: { name: v.name, niche: v.niche, keywords: v.keywords.split("\n"), settings } });
       await loadProjects();
       S.tab = "outliers";
@@ -915,7 +919,8 @@ document.addEventListener("submit", async (ev) => {
     } else if (form.id === "settings-form") {
       const v = Object.fromEntries(new FormData(form));
       const settings = { ...Object.fromEntries(NUMERIC.map((k) => [k, Number(v[k])])), ai_model: v.ai_model,
-        ai_annotation: form.ai_annotation.checked, account_search: form.account_search.checked, allow_long_transcription: form.allow_long_transcription.checked };
+        ai_annotation: form.ai_annotation.checked, account_search: form.account_search.checked, allow_long_transcription: form.allow_long_transcription.checked,
+        study_accounts: handles(v.study_accounts) };
       await api(`/api/projects/${S.projectId}`, { method: "PATCH", body: { name: v.name, niche: v.niche, keywords: v.keywords.split("\n"), settings } });
       await loadProjects();
       toast("Project saved");

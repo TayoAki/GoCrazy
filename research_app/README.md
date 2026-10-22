@@ -28,6 +28,10 @@ else still works. Data lives in `data/` (SQLite database, covers, frames), which
    downloaded.
 5. **Budget.** Every run has a hard credit cap (default 300). The run stops cleanly when it's reached, or when you press Stop.
 
+**Accounts to study.** Name accounts you want to learn from (e.g. one that grew fast in the niche). They're scanned first,
+8 pages deep (about 96 reels), whatever their size, with the same 5× test; their outliers show "found via @handle". The
+odds' base rates still only use creators inside the follower range, so one huge account can't skew them.
+
 ## Teardown (annotation)
 
 Select an outlier and press **Tear down** (about 2 credits). The app fetches the post details and transcript, downloads the video,

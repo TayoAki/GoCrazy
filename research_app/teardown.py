@@ -6,7 +6,7 @@ import threading
 
 from . import ai, annotate, db, media
 from .annotate import field
-from .config import has_ffmpeg, openrouter_key, scrapecreators_key
+from .config import MEDIA, has_ffmpeg, openrouter_key, scrapecreators_key
 from .scrapecreators import ScrapeCreators, ScrapeError
 
 
@@ -71,15 +71,17 @@ def _run_scenes(shortcode, project_id, data):
     try:
         with db.connect() as conn:
             settings = db.project_settings(conn.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone())
-        client = ScrapeCreators(scrapecreators_key())
-        post = client.post(data["url"])
-        if not post.get("video_url"):
-            raise RuntimeError("This post has no video")
-        video = _analyze_video(client, data["url"], shortcode, post)
-        if video.get("error"):
-            raise RuntimeError(video["error"])
-        data["media"].update(_media_urls(shortcode, video))
-        data["scenes"] = _scenes(shortcode, video)
+        frames = [MEDIA / shortcode / url.rsplit("/", 1)[-1] for sc in data.get("scenes") or [] for url in sc["frames"]]
+        if not frames or not all(f.exists() for f in frames):  # only fetch the video again when the scene frames are gone
+            client = ScrapeCreators(scrapecreators_key())
+            post = client.post(data["url"])
+            if not post.get("video_url"):
+                raise RuntimeError("This post has no video")
+            video = _analyze_video(client, data["url"], shortcode, post)
+            if video.get("error"):
+                raise RuntimeError(video["error"])
+            data["media"].update(_media_urls(shortcode, video))
+            data["scenes"] = _scenes(shortcode, video)
         data = apply_scenes(data, settings["ai_model"])
     except Exception as e:
         error = str(e)

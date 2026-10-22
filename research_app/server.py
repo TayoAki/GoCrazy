@@ -1,4 +1,5 @@
 import json
+import re
 import statistics
 import time
 from collections import Counter
@@ -67,7 +68,10 @@ def clean_keywords(keywords):
 def clean_settings(settings):
     out = {}
     for key, default in DEFAULT_SETTINGS.items():
-        if key in settings and settings[key] not in (None, ""):
+        if key == "study_accounts" and key in settings:
+            raw = settings[key] if isinstance(settings[key], list) else re.split(r"[\s,]+", str(settings[key] or ""))
+            out[key] = list(dict.fromkeys(h.strip().lstrip("@").lower() for h in raw if str(h).strip().lstrip("@")))
+        elif key in settings and settings[key] not in (None, ""):
             try:
                 out[key] = type(default)(settings[key]) if not isinstance(default, bool) else bool(settings[key])
             except (TypeError, ValueError):

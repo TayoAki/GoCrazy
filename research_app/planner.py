@@ -129,11 +129,13 @@ def slots_for(followers, posts):
 def base_rates(project_id):
     """Share of reels from in-range scanned creators that beat 1x/2x/5x/10x their follower count."""
     with db.connect() as conn:
+        settings = db.project_settings(conn.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone())
+        # Only creators in the follower range: an account you named to study can be far bigger and would skew the rates.
         rows = conn.execute("""SELECT r.views, c.followers FROM reels r
                                JOIN project_creators pc ON pc.username = r.username AND pc.project_id = ?
                                JOIN creators c ON c.username = r.username
-                               WHERE pc.status = 'scanned' AND r.views IS NOT NULL AND c.followers > 0""",
-                            (project_id,)).fetchall()
+                               WHERE pc.status = 'scanned' AND r.views IS NOT NULL AND c.followers BETWEEN ? AND ?""",
+                            (project_id, max(1, settings["min_followers"]), settings["max_followers"])).fetchall()
     n = len(rows)
     rate = lambda t: (sum(1 for r in rows if r["views"] / r["followers"] >= t) / n) if n else None
     return {"reels": n, "p1": rate(1), "p2": rate(2), "p5": rate(5), "p10": rate(10)}
