@@ -3,6 +3,7 @@
 Placeholders stay as [[...]] so they're easy to find and replace. Outlier ids the planner cites become @handles.
 """
 
+import json
 import re
 from datetime import date
 
@@ -35,11 +36,65 @@ def _sources(shortcodes):
     if not shortcodes:
         return {}
     with db.connect() as conn:
-        rows = conn.execute(f"""SELECT o.shortcode, MAX(o.ratio) AS ratio, r.username, r.url FROM outliers o
+        rows = conn.execute(f"""SELECT o.shortcode, MAX(o.ratio) AS ratio, MAX(o.basis) AS basis, r.username, r.url FROM outliers o
                                 JOIN reels r ON r.shortcode = o.shortcode
                                 WHERE o.shortcode IN ({",".join("?" * len(shortcodes))}) GROUP BY o.shortcode""",
                              list(shortcodes)).fetchall()
     return {r["shortcode"]: dict(r) for r in rows}
+
+
+def _cards(shortcodes):
+    """Each reference reel's teardown card: fields, audio and caption."""
+    if not shortcodes:
+        return {}
+    with db.connect() as conn:
+        rows = conn.execute(f"SELECT shortcode, data FROM teardowns WHERE status='done' AND shortcode IN "
+                            f"({','.join('?' * len(shortcodes))})", list(shortcodes)).fetchall()
+    out = {}
+    for r in rows:
+        d = json.loads(r["data"])
+        out[r["shortcode"]] = {"fields": {k: v.get("value") for k, v in d["fields"].items()}, "music": d.get("music") or {},
+                               "caption": d.get("caption")}
+    return out
+
+
+def _card_markdown(src, card):
+    f, music = card["fields"], card["music"]
+    st = f.get("stats") or {}
+    num = lambda n: f"{n:,}" if isinstance(n, (int, float)) else None
+    stats = [f"{num(st.get('views'))} views" if st.get("views") else None,
+             f"{num(st.get('followers'))} followers ({src['ratio']}×)" if st.get("followers") else None,
+             f"{num(st.get('likes'))} likes" if st.get("likes") is not None else None,
+             f"{num(st.get('comments'))} comments" if st.get("comments") is not None else None,
+             f"{round(st['duration_s'])} s" if st.get("duration_s") else None,
+             f"posted {_day(st['posted'][:10])}" if st.get("posted") else None]
+    hook = [f"said “{f['verbal_hook']}”" if f.get("verbal_hook") else None,
+            f"on screen “{f['written_hook']}”" if f.get("written_hook") else None,
+            f"shows {f['visual_hook']}" if f.get("visual_hook") else None]
+    kinds = [(k, _label(f.get(k))) for k in ("hook_pattern", "format", "angle", "video_type", "delivery", "story_type", "complexity")]
+    pace = [f.get("structure_pattern"), f"{f['cuts']} hard cuts" if f.get("cuts") is not None else None,
+            f"average shot {f['avg_shot_s']} s" if f.get("avg_shot_s") else None,
+            f"{f['word_count']} words ({f['words_per_second']}/s)" if f.get("word_count") else None]
+    cta = [_label(f.get("cta_type")), _label(f.get("cta_mechanic")), f"keyword “{f['cta_keyword']}”" if f.get("cta_keyword") else None]
+    if music.get("uses_original_audio"):
+        audio = "original audio (the creator's own recording)"
+    elif music.get("song_name"):
+        audio = f"“{music['song_name']}” by {music.get('artist_name') or 'unknown'}"
+    else:
+        audio = _label(f.get("audio")) or None
+    caption = (card.get("caption") or "").split("\n")[0][:200]
+    lines = [("Stats", " · ".join(x for x in stats if x)),
+             ("Why it's a reference", "a doubled-down template: the account keeps posting it and it keeps working"
+              if src.get("basis") == "template" else f"it passed the outlier test ({src['ratio']}× the creator's followers)"),
+             ("Hook", " · ".join(x for x in hook if x)),
+             ("Type", " · ".join(f"{_label(k).capitalize()}: {v}" for k, v in kinds if v)),
+             ("Structure", " · ".join(str(x) for x in pace if x)),
+             ("What it teaches", f.get("value_summary")),
+             ("Call to action", ", ".join(x for x in cta if x) + (f": “{f['cta_text']}”" if f.get("cta_text") else "")),
+             ("Series", f"{_label(f.get('series_type')) or 'yes'}" + (f", marker “{f['episode_marker']}”" if f.get("episode_marker") else "")) if f.get("is_series") else ("Series", None),
+             ("Audio", audio),
+             ("Caption", f"“{caption}”" if caption else None)]
+    return [f"- **{k}:** {v}" for k, v in lines if v]
 
 
 def _handles(text, sources):
@@ -53,7 +108,7 @@ def _sealcam(item, t):
     return [f"- **{k} ({SEALCAM_NAMES[k]}):** {t(item.get(k))}" for k in SEALCAM_KEYS if item.get(k)]
 
 
-def post_markdown(post, rates, sources, refs=None, level=1):
+def post_markdown(post, rates, sources, refs=None, level=1, cards=None):
     h = "#" * level
     t = lambda text: _handles(text, sources)
     hook, cta = post.get("hook") or {}, post.get("cta") or {}
@@ -127,14 +182,16 @@ def post_markdown(post, rates, sources, refs=None, level=1):
         out += ["", f"{h}# Teleprompter", "", "Just the words, in order.", "", *[x for s in says for x in (s, "")]]
     for sc_id in post.get("source_outliers") or []:
         if (refs or {}).get(sc_id) and sources.get(sc_id):
-            out += [""] + reference_markdown(sources[sc_id], refs[sc_id], level)
+            out += [""] + reference_markdown(sources[sc_id], refs[sc_id], level, (cards or {}).get(sc_id))
     return "\n".join(out).rstrip() + "\n"
 
 
-def reference_markdown(src, ref, level=1):
+def reference_markdown(src, ref, level=1, card=None):
     h = "#" * level
-    out = [f"{h}# Reference breakdown: @{src['username']} ({src['ratio']}×)", "",
-           f"{src['url']} · scene by scene in SEALCaM. A scene that continues the same shot is a segment of a long hold.", ""]
+    out = [f"{h}# Reference breakdown: @{src['username']} ({src['ratio']}×)", "", src["url"], ""]
+    if card:
+        out += _card_markdown(src, card) + [""]
+    out += ["Scene by scene in SEALCaM. A scene that continues the same shot is a segment of a long hold.", ""]
     for sc in ref["scenes"]:
         how = "hard cut" if sc.get("cut", True) else "same shot continues"
         n = sc.get("flash_cuts") or 0
@@ -152,7 +209,7 @@ def plan_exports(project_id, data):
     """{"week": {...}, "posts": {slot: {...}}}, each with a filename and its Markdown."""
     posts, rates = data["posts"], data.get("rates") or {}
     ids = {s for p in posts for s in p.get("source_outliers") or []}
-    sources, refs = _sources(ids), reference_scenes(ids)
+    sources, refs, cards = _sources(ids), reference_scenes(ids), _cards(ids)
     with db.connect() as conn:
         project = conn.execute("SELECT name, niche FROM projects WHERE id=?", (project_id,)).fetchone()
     first = posts[0]["date"] if posts else date.today().isoformat()
@@ -174,9 +231,9 @@ def plan_exports(project_id, data):
         week += ["---", "", "# Reference breakdowns", "",
                  "The outliers this week borrows from, scene by scene. Shots in the shot lists name the scene they borrow from.", ""]
         for s in used:
-            week += reference_markdown(sources[s], refs[s], level=2) + [""]
+            week += reference_markdown(sources[s], refs[s], level=2, card=cards.get(s)) + [""]
     return {
         "week": {"filename": f"week-of-{first}.md", "markdown": "\n".join(week).rstrip() + "\n"},
         "posts": {p["slot"]: {"filename": f"{p['date']}-{_slug(p.get('title'))}.md",
-                              "markdown": post_markdown(p, rates, sources, refs)} for p in posts},
+                              "markdown": post_markdown(p, rates, sources, refs, cards=cards)} for p in posts},
     }
