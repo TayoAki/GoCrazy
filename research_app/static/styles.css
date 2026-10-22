@@ -309,6 +309,30 @@ details.raw > summary { cursor: pointer; font-weight: 600; }
 .rung .b { font-size: var(--t-xs); color: var(--faint); font-variant-numeric: tabular-nums; }
 .why-odds { font-size: var(--t-sm); color: var(--muted); margin: var(--s2) 0 0; padding-left: 18px; }
 .why-odds li { margin: 2px 0; }
+.refs { display: flex; flex-direction: column; gap: 6px; margin: var(--s2) 0 var(--s4); }
+.linkish { border: 0; background: none; padding: 0; color: var(--muted); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; font: inherit; font-size: var(--t-xs); }
+.linkish:hover { color: var(--text); }
+
+/* doubled-down accounts */
+.dd-list { display: flex; flex-direction: column; gap: var(--s5); }
+.dd { border: 1px solid var(--line); border-radius: var(--r-md); background: var(--panel); padding: var(--s4) var(--s5); display: flex; flex-direction: column; gap: var(--s4); min-width: 0; }
+.dd-h { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s2) var(--s3); }
+.dd-h a { font-weight: 650; font-size: var(--t-lg); text-decoration: none; }
+.dd-h a:hover { text-decoration: underline; }
+.tpl { display: flex; flex-direction: column; gap: var(--s2); min-width: 0; }
+.tpl + .tpl { border-top: 1px solid var(--line); padding-top: var(--s4); }
+.tpl-h { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2); }
+.tpl-h b { font-size: var(--t-lg); font-weight: 650; }
+.tpl.minor .tpl-h b { font-weight: 550; color: var(--muted); }
+.tpl-ex { display: grid; grid-template-columns: repeat(auto-fill, minmax(128px, 1fr)); gap: var(--s3); margin-top: var(--s2); }
+.ex { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.ex img, .ex .ph { width: 100%; aspect-ratio: 9 / 16; object-fit: cover; border-radius: var(--r-sm); background: var(--chip); }
+.ex .ph { display: grid; place-items: center; color: var(--faint); }
+.ex .n { font-size: var(--t-xs); color: var(--muted); font-variant-numeric: tabular-nums; }
+.ex .t { font-size: var(--t-sm); line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.ex .btn { align-self: flex-start; }
+button.chip { border: 0; cursor: pointer; font: inherit; font-size: var(--t-xs); }
+
 /* scenes (teardown) and shots (plan), both in SEALCaM */
 .scenes, .shots { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: var(--s5); }
 .scene { display: grid; grid-template-columns: 172px minmax(0, 1fr); gap: var(--s4); align-items: start; }

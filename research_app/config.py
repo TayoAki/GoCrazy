@@ -19,7 +19,8 @@ DEFAULT_SETTINGS = {
     "account_search": True,    # also run Instagram account search per keyword (1 credit, includes follower counts)
     "reel_pages": 2,           # pages of a creator's reels to scan (12 reels, 1 credit each)
     "max_creators": 30,
-    "study_accounts": [],      # handles always scanned (deeper, whatever their size), e.g. an account you want to copy
+    "study_accounts": [],
+    "double_down_max_followers": 5000000,  # bigger creators are still scanned, only to spot doubled-down templates      # handles always scanned (deeper, whatever their size), e.g. an account you want to copy
     "credit_budget": 300,      # hard stop for one research run
     "allow_long_transcription": False,  # >120 s reels cost 10 credits per started minute
     "ai_annotation": True,     # run the OpenRouter vision pass at the end of every teardown

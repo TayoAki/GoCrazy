@@ -114,7 +114,7 @@ const ICON = {
 
 // ---------- state ----------
 const S = {
-  view: "research", tab: "outliers", projects: [], projectId: null, outliers: [], creators: [], patterns: null, rates: null,
+  view: "research", tab: "outliers", projects: [], projectId: null, outliers: [], creators: [], doubled: [], patterns: null, rates: null,
   runs: [], plans: [], planId: null, planForm: false, open: null, td: null, editing: null, edits: {},
   status: {}, vocab: null, sort: "ratio", filter: "active", events: [], seenEvents: 0,
 };
@@ -130,16 +130,16 @@ async function loadProjects() {
 }
 
 async function loadProjectData() {
-  if (!S.projectId) Object.assign(S, { outliers: [], creators: [], patterns: null, runs: [], plans: [], rates: null });
+  if (!S.projectId) Object.assign(S, { outliers: [], creators: [], doubled: [], patterns: null, runs: [], plans: [], rates: null });
   if (!S.projectId) return;
   const id = S.projectId;
-  const [outliers, creators, patterns, runs, plans, rates] = await Promise.all([
+  const [outliers, creators, patterns, runs, plans, rates, doubled] = await Promise.all([
     api(`/api/projects/${id}/outliers?status=${S.filter}&sort=${S.sort}`), api(`/api/projects/${id}/creators`),
     api(`/api/projects/${id}/patterns`), api(`/api/projects/${id}/runs`), api(`/api/projects/${id}/plans`),
-    api(`/api/projects/${id}/rates`),
+    api(`/api/projects/${id}/rates`), api(`/api/projects/${id}/doubled-down`),
   ]);
   if (id !== S.projectId) return;
-  Object.assign(S, { outliers, creators, patterns, runs, plans, rates });
+  Object.assign(S, { outliers, creators, patterns, runs, plans, rates, doubled });
 }
 
 async function loadStatus(refresh = false) {
@@ -345,9 +345,9 @@ function renderMain() {
     return;
   }
   const done = S.outliers.filter((o) => o.teardown_status === "done").length;
-  const tabs = [["outliers", "Outliers", p.outliers - p.dismissed], ["creators", "Creators", S.creators.length],
+  const tabs = [["outliers", "Outliers", p.outliers - p.dismissed], ["doubled", "Doubled down", S.doubled.length], ["creators", "Creators", S.creators.length],
     ["teardowns", "Teardowns", done], ["plan", "Plan", S.plans.filter((x) => x.status === "done").length]];
-  const body = S.open ? teardownPage() : { creators: creatorsTab, teardowns: teardownsTab, plan: planTab }[S.tab]?.() ?? outliersTab(p);
+  const body = S.open ? teardownPage() : { doubled: doubledTab, creators: creatorsTab, teardowns: teardownsTab, plan: planTab }[S.tab]?.() ?? outliersTab(p);
   main.innerHTML = `<div class="tabs" role="tablist">${tabs.map(([k, l, n]) =>
     `<button class="tab" role="tab" data-tab="${k}" aria-selected="${S.tab === k}">${l}<span class="tab-n">${n}</span></button>`).join("")}</div>
     <div class="content">${body}</div>`;
@@ -361,7 +361,7 @@ function outliersTab(p) {
     return `<button class="card" data-open="${esc(o.shortcode)}" aria-label="Open teardown of @${esc(o.username)}, ${o.ratio} times">
       <div class="thumb">${o.cover ? `<img src="${esc(o.cover)}" alt="" loading="lazy">` : `<div class="ph">${ICON.image}</div>`}
         <span class="ratio">${o.ratio}×</span>
-        <span class="corner">${o.status === "saved" ? `<span class="chip accent">${ICON.star}Saved</span>` : ""}${o.sponsored ? `<span class="chip warn">Sponsored</span>` : ""}</span>
+        <span class="corner">${o.basis === "template" ? `<span class="chip info">Template</span>` : ""}${o.status === "saved" ? `<span class="chip accent">${ICON.star}Saved</span>` : ""}${o.sponsored ? `<span class="chip warn">Sponsored</span>` : ""}</span>
       </div>
       <div class="body">
         <div class="who">@${esc(o.username)}</div>
@@ -395,15 +395,41 @@ function outliersTab(p) {
     ${runCard}`;
 }
 
+function doubledTab() {
+  const head = `<div class="page-head"><h1>Doubled down</h1><p>Creators who found a template that works and keep posting it.
+    A template is a phrase that keeps coming back in their caption headlines. It counts when it shows up in 4 or more reels,
+    its typical reel reaches at least 10% of their followers, and it's either a habit (1 in 5 of their reels) or beats their
+    follower count. Copying a template that keeps working is often safer than copying one lucky reel.</p></div>`;
+  if (!S.doubled.length) return head + `<p class="muted">None found yet. Run research: every scanned creator, including accounts you name to study and bigger accounts up to ${fmt(project()?.settings?.double_down_max_followers)} followers, is checked for a repeated template.</p>`;
+  const example = (e) => `<div class="ex">
+      ${e.cover ? `<img src="${esc(e.cover)}" alt="" loading="lazy">` : `<div class="ph">${ICON.image}</div>`}
+      <div class="n">${fmt(e.views)} views · ${e.ratio}× followers</div>
+      <div class="t" title="${esc(e.title)}">${esc(e.title || "No caption")}</div>
+      ${e.outlier_status ? `<button class="btn sm" data-open="${esc(e.shortcode)}">${ICON.cut} ${e.teardown_status === "done" ? "Teardown" : "Open"}</button>`
+        : STATIC ? `<a class="btn sm quiet" href="${esc(e.url)}" target="_blank" rel="noopener">${ICON.ext} Open reel</a>`
+        : `<button class="btn sm" data-action="add-template" data-shortcode="${esc(e.shortcode)}">${ICON.cut} Tear down</button>`}
+    </div>`;
+  return head + `<div class="dd-list">${S.doubled.map((a) => `<section class="dd">
+      <div class="dd-h"><a href="https://www.instagram.com/${encodeURIComponent(a.username)}/" target="_blank" rel="noopener">@${esc(a.username)}</a>
+        <span class="small muted">${fmt(a.followers)} followers · ${a.reels} reels scanned · typical reel ${fmt(a.median_views)} views</span>
+        ${a.study ? `<span class="chip accent">Account you named</span>` : ""}</div>
+      ${a.templates.map((t) => `<div class="tpl ${t.qualifies ? "" : "minor"}">
+        <div class="tpl-h"><b>“${esc(cap(t.phrase))}”</b><span class="chip ${t.qualifies ? "good" : ""}">${t.qualifies ? "Doubled down" : "Also repeats"}</span></div>
+        <div class="small muted">${t.count} of ${t.of} reels (${pct(t.share, 0)}) · typical one ${fmt(t.median_views)} views, ${t.reach}× followers${t.vs_other_reels ? ` · ${t.vs_other_reels}× their other reels` : ""}</div>
+        <div class="tpl-ex">${t.examples.map(example).join("")}</div></div>`).join("")}
+    </section>`).join("")}</div>`;
+}
+
 function creatorsTab() {
   if (!S.creators.length) return `<p class="muted">Creators found by keyword search appear here.</p>`;
   const st = { scanned: ["good", "Scanned"], found: ["", "Not scanned"], too_big: ["warn", "Too big"], too_small: ["warn", "Too small"], private: ["bad", "Private"], error: ["bad", "Error"] };
   return `<div class="page-head"><h1>Creators</h1><p>Everyone the keyword and account searches surfaced, with why each was or wasn't scanned.</p></div>
-    <div class="tablewrap"><table><thead><tr><th>Creator</th><th class="num">Followers</th><th class="num">Reels scanned</th><th class="num">Median views</th><th class="num">Outliers</th><th class="num">Best</th><th>Status</th><th>Found via</th></tr></thead><tbody>
+    <div class="tablewrap"><table><thead><tr><th>Creator</th><th class="num">Followers</th><th class="num">Reels scanned</th><th class="num">Median views</th><th class="num">Outliers</th><th class="num">Best</th><th>Doubles down on</th><th>Status</th><th>Found via</th></tr></thead><tbody>
     ${S.creators.map((c) => `<tr>
       <td><a href="https://www.instagram.com/${encodeURIComponent(c.username)}/" target="_blank" rel="noopener">@${esc(c.username)}</a>${c.full_name ? `<div class="xs muted">${esc(c.full_name)}</div>` : ""}</td>
       <td class="num">${fmt(c.followers)}</td><td class="num">${c.reels || "—"}</td><td class="num">${fmt(c.median_views)}</td>
       <td class="num">${c.outliers || "—"}</td><td class="num">${c.best_ratio ? c.best_ratio + "×" : "—"}</td>
+      <td>${(S.doubled.find((d) => d.username === c.username)?.templates || []).filter((t) => t.qualifies).map((t) => `<button class="chip good" data-tab="doubled">${esc(cap(t.phrase))}</button>`).join(" ") || "—"}</td>
       <td><span class="chip ${st[c.status]?.[0] || ""}">${st[c.status]?.[1] || esc(label(c.status))}</span></td>
       <td class="clip">${c.keywords.map(esc).join(", ")}</td></tr>`).join("")}
     </tbody></table></div>`;
@@ -617,6 +643,13 @@ function planForm(teardowns) {
     </form>`;
 }
 
+// "DS__AHijRFc scene 2" -> a link that opens that outlier's teardown.
+function shotRef(ref) {
+  const sc = String(ref).split(/\s+/)[0];
+  const o = outlier(sc);
+  return o ? `<button class="linkish xs" data-open="${esc(sc)}">borrows from ${fills(ref)}</button>` : `<span class="xs faint">borrows from ${fills(ref)}</span>`;
+}
+
 function planDay(p, i, rates, planId) {
   const o = p.odds;
   const ceiling = (rates.p5 || 0.01) * 3;
@@ -636,6 +669,7 @@ function planDay(p, i, rates, planId) {
       <div class="toolbar brief-tools"><span class="small muted">The brief: idea, script, shot list and the reference scenes</span><span class="spacer"></span>
         <button class="btn sm" data-action="copy-brief" data-slot="${p.slot}">${ICON.copy} Copy brief</button>
         ${STATIC ? "" : `<a class="btn sm quiet" href="/api/plans/${planId}/export.md?post=${p.slot}" download>${ICON.download} Download .md</a>`}</div>
+      ${sources.length ? `<div class="refs"><span class="small muted">Reference videos</span><div class="sources">${sources.map((x) => `<button class="source" data-open="${esc(x.shortcode)}">${x.cover ? `<img src="${esc(x.cover)}" alt="">` : `<span class="noimg"></span>`}@${esc(x.username)} · ${x.ratio}×</button>`).join("")}</div></div>` : ""}
       <div class="ladder">${rung("p1", "beats your follower count", rates.p1)}${rung("p2", "2× your followers", rates.p2)}${rung("p5", "5× (an outlier)", rates.p5)}${rung("p10", "10×", rates.p10)}</div>
       <ul class="why-odds">
         <li>${o.multiplier}× the niche base rate: evidence ×${o.factors.evidence} · funnel stage ×${o.factors.funnel}${o.factors.source_median_ratio ? ` · its sources median ${o.factors.source_median_ratio}×` : ""}.</li>
@@ -651,7 +685,7 @@ function planDay(p, i, rates, planId) {
       ${(p.shots || []).length ? `<section class="sec"><div class="sec-h"><h2>Shot list</h2><span class="small muted">SEALCaM · one shot per setup or cut</span></div>
         <ol class="shots">${p.shots.map((sh, k) => `<li class="shot">
           <div class="scene-h"><b>Shot ${k + 1}</b>${sh.beat ? `<span class="beat ${esc(sh.beat)}">${esc(sh.beat)}</span>` : ""}${sh.duration_s ? `<span class="tc">about ${sh.duration_s} s</span>` : ""}
-            ${sh.reference ? `<span class="xs faint">borrows from ${fills(sh.reference)}</span>` : ""}</div>
+            ${sh.reference ? shotRef(sh.reference) : ""}</div>
           ${sh.say ? `<p class="say">“${fills(sh.say)}”</p>` : ""}${sh.on_screen_text ? `<p class="small"><b>On screen:</b> ${fills(sh.on_screen_text)}</p>` : ""}
           ${sealcamRows(sh, fills)}</li>`).join("")}</ol></section>` : p.shots_error ? `<div class="notice">${ICON.alert}<div>The shot list failed: ${esc(p.shots_error)}</div></div>` : ""}
       <section class="sec"><div class="sec-h"><h2>Close and post</h2></div>
@@ -659,7 +693,6 @@ function planDay(p, i, rates, planId) {
           <dt>Caption</dt><dd>${fills(p.caption_first_line)}<span class="note">${(p.hashtags || []).map((h) => "#" + esc(String(h).replace(/^#/, ""))).join(" ")}</span></dd></dl></section>
       <section class="sec"><div class="sec-h"><h2>Why it should work</h2></div>
         <p>${fills(p.why)}</p>
-        ${sources.length ? `<div class="sources" style="margin-top:12px">${sources.map((s) => `<button class="source" data-open="${esc(s.shortcode)}">${s.cover ? `<img src="${esc(s.cover)}" alt="">` : `<span class="noimg"></span>`}@${esc(s.username)} · ${s.ratio}×</button>`).join("")}</div>` : ""}
         <p class="small muted" style="margin-top:12px"><b>Risk:</b> ${fills(p.risk)}</p>
         ${(p.needs_from_you || []).length ? `<p class="small" style="margin-top:12px"><b>You need to fill in:</b></p><ul class="why-odds">${p.needs_from_you.map((n) => `<li>${fills(n)}</li>`).join("")}</ul>` : ""}
       </section>
@@ -857,6 +890,13 @@ document.addEventListener("click", async (ev) => {
     "cancel-new": () => { S.view = "research"; render(); },
     run: startRun, stop: stopRun,
     teardown: () => startTeardown(S.open), ai: () => startTeardown(S.open, "ai"), scenes: () => startTeardown(S.open, "scenes"),
+    "add-template": async () => {
+      const sc = el.dataset.shortcode;
+      await api(`/api/projects/${S.projectId}/outliers`, { method: "POST", body: { shortcode: sc } });
+      await loadProjectData();
+      await openTeardown(sc);
+      await startTeardown(sc);
+    },
     "copy-brief": () => copyText(currentPlan()?.export?.posts?.[el.dataset.slot]?.markdown, "Brief copied"),
     "copy-week": () => copyText(currentPlan()?.export?.week?.markdown, "Week copied"),
     save: () => setOutlierStatus(S.open, "saved"), unsave: () => setOutlierStatus(S.open, "new"), dismiss: () => setOutlierStatus(S.open, "dismissed"),

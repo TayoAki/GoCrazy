@@ -52,7 +52,9 @@ delivery, format, beats, CTA.
 
 """ + RULES + """
 4. One post per slot, same order, matching the slot's funnel stage, content type and CTA type.
-5. Base each post on 1-3 teardowns (by id) whose hook, structure or format it reuses.
+5. Base each post on 1-3 teardowns (by id) whose hook, structure or format it reuses. Teardowns with
+   doubled_down_template=true come from accounts that post that template again and again and keep winning: prefer
+   them, and when you reuse one, give the post a series_marker so the creator can repeat it too.
 6. Spread the week: no format or angle more than twice. Never use the talking_head format: pick an engaging one.
 7. Use only these values: angle {angle}; video_type {video_type}; delivery {delivery}; story_type {story_type};
    format {format}; hook_pattern {hook_pattern}; complexity {complexity}.
@@ -143,7 +145,7 @@ def base_rates(project_id):
 
 def teardown_summaries(project_id):
     with db.connect() as conn:
-        rows = conn.execute("""SELECT o.shortcode, o.ratio, r.username, t.data FROM outliers o
+        rows = conn.execute("""SELECT o.shortcode, o.ratio, o.basis, r.username, t.data FROM outliers o
                                JOIN reels r ON r.shortcode = o.shortcode JOIN teardowns t ON t.shortcode = o.shortcode
                                WHERE o.project_id = ? AND o.status <> 'dismissed' AND t.status = 'done'
                                ORDER BY o.ratio DESC""", (project_id,)).fetchall()
@@ -155,6 +157,7 @@ def teardown_summaries(project_id):
         f = {k: v.get("value") for k, v in data["fields"].items()}
         out.append({
             "id": r["shortcode"], "creator": "@" + r["username"], "ratio": r["ratio"],
+            "doubled_down_template": r["basis"] == "template",
             "verbal_hook": f.get("verbal_hook"), "written_hook": f.get("written_hook"), "visual_hook": f.get("visual_hook"),
             "hook_pattern": f.get("hook_pattern"), "angle": f.get("angle"), "video_type": f.get("video_type"),
             "delivery": f.get("delivery"), "story_type": f.get("story_type"), "format": f.get("format"),

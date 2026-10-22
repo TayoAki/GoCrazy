@@ -16,7 +16,7 @@ from starlette.background import BackgroundTask
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import annotate, backup, brief, config, db, pipeline, planner, teardown
+from . import annotate, backup, brief, config, db, doubledown, media, pipeline, planner, teardown
 from .config import DATA, DEFAULT_SETTINGS, MEDIA
 from .scrapecreators import ScrapeCreators, ScrapeError
 
@@ -256,7 +256,7 @@ def list_outliers(project_id: int, status: str = "active", sort: str = "ratio"):
              "all": "1=1"}.get(status, "o.status <> 'dismissed'")
     with db.connect() as conn:
         rows = conn.execute(f"""
-            SELECT o.shortcode, o.ratio, o.keyword, o.status, r.url, r.username, r.views, r.likes, r.comments, r.taken_at,
+            SELECT o.shortcode, o.ratio, o.keyword, o.status, o.basis, r.url, r.username, r.views, r.likes, r.comments, r.taken_at,
                    r.caption, r.duration, c.followers, c.full_name, c.is_verified, t.status AS teardown_status, t.data AS teardown
             FROM outliers o JOIN reels r ON r.shortcode = o.shortcode LEFT JOIN creators c ON c.username = r.username
             LEFT JOIN teardowns t ON t.shortcode = o.shortcode
@@ -304,6 +304,49 @@ def list_creators(project_id: int):
                         "outliers": outliers[0], "best_ratio": outliers[1]})
     order = {"scanned": 0, "found": 1, "too_big": 2, "too_small": 3, "private": 4, "error": 5}
     return sorted(out, key=lambda c: (order.get(c["status"], 9), -(c["best_ratio"] or 0), -(c["followers"] or 0)))
+
+
+@app.get("/api/projects/{project_id}/doubled-down")
+def doubled_down(project_id: int):
+    """Creators who keep posting one template that works, with example reels for each template."""
+    with db.connect() as conn:
+        study = set(db.project_settings(get_project(conn, project_id)).get("study_accounts") or [])
+        accounts = doubledown.project_accounts(conn, project_id)
+        for a in accounts:
+            a["study"] = a["username"] in study
+            for t in a["templates"]:
+                examples = []
+                for sc in t["examples"]:
+                    r = conn.execute("""SELECT r.shortcode, r.url, r.views, r.caption, r.taken_at, o.status AS outlier_status,
+                                               td.status AS teardown_status FROM reels r
+                                        LEFT JOIN outliers o ON o.shortcode = r.shortcode AND o.project_id = ?
+                                        LEFT JOIN teardowns td ON td.shortcode = r.shortcode WHERE r.shortcode = ?""",
+                                     (project_id, sc)).fetchone()
+                    examples.append({**dict(r), "title": doubledown.title(r["caption"]), "cover": cover_url(sc),
+                                     "ratio": round(r["views"] / a["followers"], 1)})
+                t["examples"] = examples
+    return accounts
+
+
+class TemplateIn(BaseModel):
+    shortcode: str
+
+
+@app.post("/api/projects/{project_id}/outliers")
+def add_template_reel(project_id: int, body: TemplateIn):
+    """Add a doubled-down template's example reel to the project's outliers so it can be torn down and planned from."""
+    with db.connect() as conn:
+        get_project(conn, project_id)
+        reel = conn.execute("""SELECT r.shortcode, r.views, r.caption, c.username, c.followers FROM reels r
+                               JOIN creators c ON c.username = r.username WHERE r.shortcode = ?""", (body.shortcode,)).fetchone()
+        if not reel or not reel["views"] or not reel["followers"]:
+            raise HTTPException(404, "Unknown reel")
+        phrase = next((p for p in doubledown.phrases(reel["caption"])), None)
+        conn.execute("""INSERT INTO outliers (project_id, shortcode, ratio, keyword, basis, created_at) VALUES (?,?,?,?, 'template', ?)
+                        ON CONFLICT(project_id, shortcode) DO UPDATE SET status = CASE WHEN status = 'dismissed' THEN 'new' ELSE status END""",
+                     (project_id, body.shortcode, round(reel["views"] / reel["followers"], 1), f"@{reel['username']} template", db.now()))
+    media.download_covers({body.shortcode})
+    return {"ok": True}
 
 
 @app.get("/api/projects/{project_id}/patterns")

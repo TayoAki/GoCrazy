@@ -60,6 +60,7 @@ CREATE TABLE IF NOT EXISTS outliers (
     ratio REAL NOT NULL,
     keyword TEXT,
     status TEXT NOT NULL DEFAULT 'new',   -- new | saved | dismissed
+    basis TEXT NOT NULL DEFAULT 'followers',  -- followers (passed the 5x test) | template (a doubled-down account's template)
     created_at TEXT NOT NULL,
     PRIMARY KEY (project_id, shortcode)
 );
@@ -109,6 +110,8 @@ def connect():
 def init():
     with connect() as conn:
         conn.executescript(SCHEMA)
+        if "basis" not in {c[1] for c in conn.execute("PRAGMA table_info(outliers)")}:  # databases made before templates
+            conn.execute("ALTER TABLE outliers ADD COLUMN basis TEXT NOT NULL DEFAULT 'followers'")
         # A run left "running" by a server restart can never finish.
         conn.execute("UPDATE runs SET status='stopped', message='Server restarted', finished_at=? WHERE status='running'", (now(),))
         conn.execute("UPDATE teardowns SET status='failed', error='Server restarted' WHERE status='running'")

@@ -5,7 +5,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 
-from . import db, media
+from . import db, doubledown, media
 from .config import scrapecreators_key
 from .scrapecreators import ScrapeCreators, ScrapeError, reel_from_user_item
 
@@ -96,6 +96,8 @@ def _run(run_id, project_id, stop):
 
     _update(run_id, phase="covers", progress=0.95, message="Downloading covers", credits_used=client.credits_used)
     media.download_missing_covers(project_id)
+    with db.connect() as conn:
+        media.download_covers({sc for a in doubledown.project_accounts(conn, project_id) for t in a["templates"] for sc in t["examples"]})
 
     with db.connect() as conn:
         stats["outliers_total"] = conn.execute("SELECT COUNT(*) FROM outliers WHERE project_id=?", (project_id,)).fetchone()[0]
@@ -244,11 +246,14 @@ def _scan_creator(client, project_id, username, info, settings, check):
     if not followers:
         set_status("error")
         return result
-    if not info.get("study"):  # an account you named is scanned whatever its size
+    # Inside the follower range a creator's reels can be outliers. Bigger creators (up to double_down_max_followers) are
+    # still scanned, but only so the Doubled down tab can spot their templates. An account you named is always scanned.
+    in_range = info.get("study") or settings["min_followers"] <= followers <= settings["max_followers"]
+    if not info.get("study"):
         if followers < settings["min_followers"]:
             set_status("too_small")
             return result
-        if followers > settings["max_followers"]:
+        if followers > settings.get("double_down_max_followers", settings["max_followers"]):
             set_status("too_big")
             return result
 
@@ -276,7 +281,7 @@ def _scan_creator(client, project_id, username, info, settings, check):
         for reel in conn.execute("SELECT shortcode, views, taken_at FROM reels WHERE username=? AND views IS NOT NULL", (username,)):
             age = age_days(reel["taken_at"])
             ratio = round(reel["views"] / followers, 1)
-            if ratio >= settings["min_ratio"] and (age is None or age <= settings["max_age_days"]):
+            if in_range and ratio >= settings["min_ratio"] and (age is None or age <= settings["max_age_days"]):
                 existed = conn.execute("SELECT 1 FROM outliers WHERE project_id=? AND shortcode=?",
                                        (project_id, reel["shortcode"])).fetchone()
                 conn.execute("""INSERT INTO outliers (project_id, shortcode, ratio, keyword, created_at) VALUES (?,?,?,?,?)

@@ -28,6 +28,7 @@ def collect(project_ids=None, transcripts=True):
         routes[base + "/outliers"] = outliers
         routes[base + "/creators"] = server.list_creators(p["id"])
         routes[base + "/patterns"] = server.patterns(p["id"])
+        routes[base + "/doubled-down"] = server.doubled_down(p["id"])
         routes[base + "/runs"] = server.list_runs(p["id"])
         routes[base + "/rates"] = server.rates(p["id"])
         routes[base + "/plans"] = [{**plan, "input": {k: v for k, v in plan["input"].items() if k != "about"}}

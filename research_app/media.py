@@ -35,6 +35,18 @@ def download(url, dest):
         return False
 
 
+def download_covers(shortcodes):
+    """Covers for reels that aren't outliers (e.g. a doubled-down account's template examples)."""
+    if not shortcodes:
+        return
+    with db.connect() as conn:
+        rows = conn.execute(f"SELECT shortcode, thumb_url FROM reels WHERE thumb_url IS NOT NULL AND shortcode IN "
+                            f"({','.join('?' * len(shortcodes))})", list(shortcodes)).fetchall()
+    for row in rows:
+        if not cover_path(row["shortcode"]).exists():
+            download(row["thumb_url"], media_dir(row["shortcode"]) / "cover.jpg")
+
+
 def download_missing_covers(project_id):
     with db.connect() as conn:
         rows = conn.execute("""SELECT r.shortcode, r.thumb_url FROM outliers o JOIN reels r ON r.shortcode = o.shortcode
