@@ -28,6 +28,7 @@ client profile.
 
 ## Contents
 
+- [The core loop (read this first)](#the-core-loop-read-this-first)
 - [How to read this document](#how-to-read-this-document)
 - [The 13 hard rules](#the-13-hard-rules)
 - [Glossary](#glossary)
@@ -36,7 +37,7 @@ client profile.
 - [Phase 0: Intake (client profile and Client Bank)](#phase-0-intake)
 - [Phase 1: Plan the month](#phase-1-plan-the-month)
 - [Phase 2: Research outliers](#phase-2-research-outliers)
-- [Phase 3: Extract elements](#phase-3-extract-elements)
+- [Phase 3: Tear down each outlier (extract elements)](#phase-3-tear-down-each-outlier)
 - [Phase 4: Templatize (build the madlibs)](#phase-4-templatize)
 - [Phase 5: Fill (write the scripts)](#phase-5-fill)
 - [Phase 6: Quality gate](#phase-6-quality-gate)
@@ -47,6 +48,48 @@ client profile.
 - [Appendix C: Worked example, start to finish](#appendix-c-worked-example)
 - [Appendix D: Run checklist](#appendix-d-run-checklist)
 - [Appendix E: Source map](#appendix-e-source-map)
+
+---
+
+## The core loop (read this first)
+
+The whole method is four moves. Everything else in this playbook supports them.
+
+```
+  1. FIND              2. TEAR DOWN             3. TEMPLATIZE              4. FILL
+  outliers      ──►    each outlier      ──►    what made it work   ──►    for the client's niche
+  (Phase 2)            (Phase 3)                (Phase 4)                  (Phase 5)
+  5x test              17-element card          madlibs + blueprints       client's own words, facts, stories
+```
+
+**What you extract from every outlier** (the [teardown card](#the-teardown-card)):
+
+- performance and post type
+- topic
+- the three hooks (verbal, written, visual) and the hook pattern
+- angle and video type
+- delivery (educational or storytelling) and story type
+- **series** (is it one, and which type)
+- content type and funnel stage
+- **script structure** (the beats, easy vs complex, educational vs storytelling)
+- value
+- CTA
+- **format**
+- editing style
+
+**What you turn into templates:**
+
+- hook madlibs (verbal, written, visual)
+- script-structure madlibs
+- **format blueprints** (how to film and edit it)
+- **series blueprints** (how to build an episode)
+
+**Two ways to run it:**
+
+- **Bank-only mode (no client yet):** a minimal Phase 0 (niche, sub-niches, occupation, budgets), then Phases 2, 3 and 4.
+  The result is a reusable template bank for the niche. Templates are niche-neutral, so a bank can feed clients in any niche.
+- **Full run (for a client):** Phases 0 → 6 (and 7 and 8 when their conditions are met). If a template bank from the last 90 days
+  exists (playbook default), you MAY reuse it and research only enough to top it up.
 
 ---
 
@@ -139,6 +182,12 @@ Use these words exactly as defined.
 | **Double down** | Remaking one of the client's own outliers with a deliberate change. |
 | **Easy structure** | A repetitive, obvious pattern: the same sentence shape repeated 3 or more times with only the nouns or numbers changing (rankings, "if X then Y" lists). It gets views but few followers. |
 | **Complex structure** | Anything that isn't an easy structure: narrative or hyper-educational, not obviously templated. It gets fewer views sometimes but better follower conversion. |
+| **Teardown** | Breaking one outlier into its 17 elements (Phase 3). |
+| **Hook pattern** | A universal hook formula that works across niches, e.g. "Is it possible to…?" See [A12](#a12-hook-patterns). |
+| **Video type** | A named, recognizable kind of video: ranking, tier list, day in the life, cost breakdown and so on. See [A11](#a11-video-types). |
+| **Series** | A planned run of related posts with an episode marker ("Day 12", "Lesson 3 of 30") that people follow to see the next one. |
+| **Format blueprint** | A format turned into filming and editing instructions, with slots. |
+| **Series blueprint** | A series turned into an episode template: marker hook, episode beats, cadence and cliffhangers. |
 
 ### The 5x test
 
@@ -184,6 +233,7 @@ Find out which of these you have **before Phase 2**. Your research mode depends 
 | A list of reel URLs supplied by a human | Research Mode B | Ask for it (BLOCKED.md) or use Mode S or C |
 | Supadata API (`SUPADATA_API_KEY`) | Fallback transcripts for any platform; YouTube Shorts research (Mode C) | Use ScrapeCreators, or ask the human to transcribe manually |
 | Ability to view images | Reading on-screen text (the written hook) from cover thumbnails or frames | Mark `written_hook.confidence = "unknown"` |
+| **ffmpeg** (a video tool) + `curl` | Phase 3: pulling hook frames, overview frames and cut counts from outlier videos, so you can see the written hook, the visual hook, the format and the editing | Use cover images only; the format becomes `unknown` |
 | File write access | All outputs | Required. If missing, you're blocked |
 
 ### ScrapeCreators quick reference (preferred for Instagram)
@@ -276,6 +326,9 @@ work/<client>/
     03_elements/<outlier_id>.json   Phase 3  (one file per outlier)
     04_hook_templates.json          Phase 4
     04_structure_templates.json     Phase 4
+    04_format_blueprints.json       Phase 4
+    04_series_blueprints.json       Phase 4
+    tmp/                            Phase 3  (temporary videos and frames; delete after each teardown)
     05_scripts/<slot_id>.md         Phase 5  (one file per video)
     05_ideation.csv                 Phase 5  (one row per video)
     06_qa_report.md                 Phase 6
@@ -389,6 +442,9 @@ Ask these, in plain words, for anything that's missing:
 - [ ] `voice` is filled
 - [ ] Every bank item has an ID
 
+**Bank-only mode:** if you're only building a template bank, you need just `niche`, `sub_niches`, `occupation_title`,
+`platform` and `credit_budget`. Skip Gate 0's other boxes and Phase 1, and go to Phase 2.
+
 If the bank minimums aren't met, you MAY continue with Phases 1 to 4 (they don't need the bank). In Phase 5, insert
 `[[NEEDS CLIENT INPUT]]` markers instead of inventing anything, and list the gaps in `06_qa_report.md`.
 
@@ -427,6 +483,9 @@ funnel stage, content type and CTA type.
 5. **Founders building in public** (`is_founder_building_in_public: true`): additionally make sure **25 to 50% of slots are
    journey/documentation content** (series episodes, metric updates, cost breakdowns, "what I'd do differently"). Relabel
    `mofu` slots first, then `tofu`.
+
+   **Series (any client, optional):** if the bank has a `big_goal` or `challenge` story and Phase 4 produced a series
+   blueprint, you MAY mark one `mofu` slot per week as `series_episode: true` (playbook default), so the series runs all month.
 6. **Assign topics** so sub-niches rotate evenly: slot 1 gets sub-niche 1, slot 2 gets sub-niche 2, and so on, wrapping around.
 7. Leave `angle`, `delivery` and `format` empty for now. Phase 5 fills them.
 8. Write the file.
@@ -440,7 +499,7 @@ funnel stage, content type and CTA type.
   "rule": "90/10",
   "slots": [
     {"slot_id": "V01", "week": 1, "post_day": "Mon", "bucket": "proven", "funnel": "tofu", "content_type": "educational",
-     "cta_type": "follow", "topic": "crate training", "angle": null, "delivery": null, "format": null}
+     "cta_type": "follow", "topic": "crate training", "series_episode": false, "angle": null, "delivery": null, "format": null}
   ]
 }
 ```
@@ -458,7 +517,8 @@ funnel stage, content type and CTA type.
 ## Phase 2: Research outliers
 
 **Goal:** `02_outliers.json`, a bank of verified outliers large enough for the month.
-**Quota (playbook default):** at least `2 × proven_slots` outliers in total, **and** at least 2 per sub-niche, **and** at
+**Quota in bank-only mode (playbook default):** 40 outliers, at least 4 per sub-niche, at least 8 storytelling, and every series you come across.
+**Quota for a full run (playbook default):** at least `2 × proven_slots` outliers in total, **and** at least 2 per sub-niche, **and** at
 least 8 that clearly use a `storytelling` delivery (for the MOFU slots).
 
 ### Step 2.1: Build the keyword list → `02_keywords.json`
@@ -582,11 +642,37 @@ For each candidate video:
 
 ---
 
-## Phase 3: Extract elements
+## Phase 3: Tear down each outlier
 
-**Goal:** one `03_elements/<outlier_id>.json` per outlier you'll use, breaking the video into its seven factors.
-**Which outliers to extract:** all of them if credits allow. Otherwise prioritize (1) storytelling outliers, (2) outliers
-whose `why_saved` includes "structure", and (3) the highest `outlier_ratio`.
+**Goal:** one teardown file per outlier, `03_elements/<outlier_id>.json`, with every element on the
+[teardown card](#the-teardown-card) identified. This is the heart of the method. Everything you templatize in Phase 4 comes
+from these files, so be thorough and literal.
+**Which outliers to tear down:** all of them if credits allow. Otherwise prioritize (1) storytelling outliers, (2) series
+outliers, (3) outliers whose `why_saved` includes "structure", and (4) the highest `outlier_ratio`.
+
+### The teardown card
+
+Identify **all 17 elements** for every outlier. Each row says where to look and which closed vocabulary to use.
+
+| # | Element | Field(s) | Allowed values | How to identify it |
+|---|---|---|---|---|
+| 1 | Performance | `stats` | numbers | Copy views, creator followers, ratio and post date from `02_outliers.json` |
+| 2 | Post type | `post_type`, `carousel_type` | [A14](#a14-post-types), [A10](#a10-other-labels) | Video → `reel`; several slides → `carousel` (then pick the carousel type); single image → `photo` |
+| 3 | Topic | `topic` | a sub-niche or `cross_niche` | What the video is about |
+| 4 | Verbal hook | `verbal_hook` | exact words | [Step 3.2](#step-32-fill-in-the-teardown-card) |
+| 5 | Written hook | `written_hook` | exact text | On-screen text in the first 3 seconds (hook frames), or the cover |
+| 6 | Visual hook | `visual_hook` | one sentence | What *happens* on screen in the first 3 seconds (hook frames) |
+| 7 | Hook pattern | `hook_pattern` | [A12](#a12-hook-patterns) | Does the verbal or written hook match a known universal pattern? |
+| 8 | Angle | `angle` | [A1](#a1-angles) | The direction the video takes |
+| 9 | Video type | `video_type` | [A11](#a11-video-types) | A named type such as ranking, tier list, day in the life or cost breakdown, or `none` |
+| 10 | Delivery and story type | `delivery`, `story_type` | [A2](#a2-delivery), [A3](#a3-story-types) | Taught (educational) or told as a story? If a story, which of the 7 types? |
+| 11 | Series | `series` | [A10](#a10-other-labels) `series_type` | [Step 3.4](#step-34-detect-series-content) |
+| 12 | Content type and funnel | `content_type`, `funnel` | [A4](#a4-content-types), [A7](#a7-funnel-stages) | Broad and simple → `tofu`; personal → `mofu`; in-depth, proof or offer → `bofu` |
+| 13 | Script structure | `beats`, `complexity`, `structure_class`, `structure_pattern`, `word_count`, `words_per_second` | [A8](#a8-beat-labels), `easy`/`complex` | [Step 3.2](#step-32-fill-in-the-teardown-card) |
+| 14 | Value | `value` | summary + flags | What the viewer learns, whether it's measurable, and where it came from |
+| 15 | CTA | `cta` | [A6](#a6-cta-types-and-lines), [A15](#a15-cta-mechanics) | The last spoken or written ask, word for word |
+| 16 | Format | `format`, `format_evidence` | [A5](#a5-formats) | [Step 3.3](#step-33-identify-the-format) |
+| 17 | Editing style | `editing` | [A13](#a13-audio-types) for audio | Captions, text overlays, shot length, audio, visual types |
 
 ### Step 3.1: Get the raw material
 
@@ -599,66 +685,167 @@ whose `why_saved` includes "structure", and (3) the highest `outlier_ratio`.
    - **Any platform + Supadata:** `GET /transcript?url=<url>&mode=auto&text=false`, then save the `content` array (text and
      millisecond offsets). `transcript_source: "supadata"`.
    - **Neither works:** ask the human to paste a transcript. `transcript_source: "human"`.
-2. **Stats and cover.** In Mode S you already have the stats. Get the cover image from `thumbnail_src` (ScrapeCreators) or
-   `media.thumbnailUrl` (Supadata `GET /metadata?url=<url>`). Keep the caption text too.
-3. **Cover or first frame:** open the cover image (or watch the first 3 seconds if you can view video).
+2. **Post details.** `GET /v1/instagram/post?url=<url>&cache_max_age=30d` (1 credit; Mode C uses Supadata `/metadata`).
+   Keep:
+   - the caption;
+   - the cover (`thumbnail_src`);
+   - `video_url`, which expires, so download straight away;
+   - `video_duration`;
+   - `clips_music_attribution_info` (`uses_original_audio`, `song_name`);
+   - the post type, plus each slide's media for carousels.
+3. **Look at the video.** You need **ffmpeg** and the ability to view images. Use these exact commands, where `<m>` is the
+   month folder and `O001` the outlier ID:
 
-### Step 3.2: Fill in the seven factors, exactly as follows
+   ```bash
+   mkdir -p <m>/tmp
+   curl -L -s -o <m>/tmp/O001.mp4 "<video_url>"
+   # Hook frames: 2 per second for the first 3 seconds (6 images)
+   ffmpeg -loglevel error -i <m>/tmp/O001.mp4 -t 3 -vf fps=2 <m>/tmp/O001_hook_%02d.jpg
+   # Overview frames: 1 every 2 seconds for the whole video
+   ffmpeg -loglevel error -i <m>/tmp/O001.mp4 -vf fps=1/2 <m>/tmp/O001_f_%03d.jpg
+   # Count hard cuts (shot changes)
+   ffmpeg -i <m>/tmp/O001.mp4 -vf "select='gt(scene,0.3)',showinfo" -f null - 2>&1 | grep -c pts_time
+   ```
 
-| # | Field | How to fill it (no guessing) |
-|---|---|---|
-| 1 | `topic` | The sub-niche it maps to, or `cross_niche` |
-| 2a | `verbal_hook` | Take every transcript chunk with `offset < 3000`. Then keep adding words until the end of that sentence. Copy them **exactly**. If `timestamps: false`, use the first sentence of the transcript, up to 25 words |
-| 2b | `written_hook` | The on-screen text visible in the first 3 seconds, or the text on the cover image. Copy it exactly. If you can't see it, use `null` with `confidence: "unknown"`. Don't use the caption as a substitute |
-| 2c | `visual_hook` | One sentence describing what *happens* on screen in the first 3 seconds (an action, prop, location or edit). If you can only see the cover, describe the cover and set `confidence: "cover_only"` |
-| 3 | `value` | `summary`: one sentence on what the viewer learns or sees. `measurable`: true/false using the [measurable value test](#the-measurable-value-test). `source_type`: `personal_experience`, `outside_source` or `mixed` |
-| 4 | `angle`, `delivery`, `story_type` | From [A1](#a1-angles), [A2](#a2-delivery) and [A3](#a3-story-types). `story_type` is only filled when `delivery = storytelling` |
-| 4b | `beats` | Split the transcript into sentences. Label every sentence with **one** [beat label](#a8-beat-labels). Merge consecutive sentences that have the same label |
-| 4c | `complexity` | `easy` if one sentence shape repeats **3 or more times** with only nouns or numbers changing. Otherwise `complex` |
-| 5 | `cta` | `type` from [A6](#a6-cta-types-and-lines), plus the exact CTA words |
-| 6 | `format` | From [A5](#a5-formats). If you can't see the video, use `unknown` |
-| 7 | `editing_notes` | Up to 3 observations (e.g. "big yellow captions", "zoom on every step"). `null` if you can't see it |
-| — | `content_type`, `funnel` | From [A4](#a4-content-types) and [A7](#a7-funnel-stages), using: broad and simple → `tofu`; personal story → `mofu`; in-depth teaching, proof or offer → `bofu` |
+   - Then `avg_shot_s = duration_s / (cuts + 1)`, rounded to 1 decimal place.
+   - Open every hook frame and every overview frame and look at them.
+   - **Carousels:** open every slide image instead.
+   - **If you can't download the video, or you have no ffmpeg:** use the cover image only, set
+     `confidence: "cover_only"` on the hooks and `format: "unknown"`, and note why in the run log.
+4. **Delete** `<m>/tmp/` as soon as the teardown file is written. Source videos are for analysis only (rule 13).
+
+### Step 3.2: Fill in the teardown card
+
+Fill these fields exactly as described. Don't guess.
+
+| Field | Rule |
+|---|---|
+| `verbal_hook` | Take every transcript chunk with `offset < 3000`, then keep adding words until the end of that sentence. Copy them **exactly**. If `timestamps: false`, use the first sentence, up to 25 words |
+| `written_hook` | The largest on-screen text in the hook frames, copied exactly. If the hook frames show none, use the cover's text and set `confidence: "cover_only"`. If there's none at all, use `null`. **Never** use the caption as a substitute |
+| `visual_hook` | One sentence: what *happens* across the 6 hook frames (an action, prop, location, entrance or edit), e.g. "Pours three jars of rice onto the counter" |
+| `hook_pattern` | Compare the verbal and written hooks with [A12](#a12-hook-patterns). Use the first pattern whose frame words appear. If none match, use `niche_specific`. It can still be templatized |
+| `video_type` | Check [A11](#a11-video-types) in order and use the first match. If none fits, use `none` |
+| `beats` | Split the transcript into sentences, label each with **one** [beat label](#a8-beat-labels), and merge consecutive sentences with the same label |
+| `complexity` | `easy` if one sentence shape repeats **3 or more times** with only nouns or numbers changing. Otherwise `complex` |
+| `structure_class` | `<complexity>_<delivery>`: one of `easy_educational`, `complex_educational`, `easy_storytelling`, `complex_storytelling` |
+| `structure_pattern` | The beat labels joined with ` → ` (e.g. `HOOK → NAME_METHOD → STEP×3 → EXAMPLE → RECAP → CTA`). Write repeats as `×N` |
+| `word_count`, `words_per_second` | Words in the transcript; `word_count / duration_s`, rounded to 1 decimal place |
+| `value` | `summary`: one sentence. `measurable`: true or false, using the [measurable value test](#the-measurable-value-test). `source_type`: `personal_experience`, `outside_source` or `mixed` |
+| `cta` | `type` from [A6](#a6-cta-types-and-lines), `mechanic` from [A15](#a15-cta-mechanics), and `text` as the exact words. No ask → `none` |
+| `editing.captions` | `none`, `full_sentence`, `word_by_word` or `key_words_only`, plus the position and the number of colors (e.g. "word_by_word, center, 2 colors") |
+| `editing.text_overlays` | How many overview frames show on-screen text other than captions (e.g. labels or headings) |
+| `editing.avg_shot_s` | From Step 3.1 |
+| `editing.audio` | [A13](#a13-audio-types). `uses_original_audio: true` and speech → `original_voice` (or `voice_plus_music` if music is audible under it). A named song and no speech → `music_only` or `trending_audio` |
+| `editing.visual_types` | Up to 3 of: `talking_shot`, `b_roll`, `screenshots`, `screen_recording`, `props`, `charts`, `photos_from_past`, `stock`, `text_cards` |
+
+### Step 3.3: Identify the format
+
+Go through this list **in order**. The **first** rule that's true is the `format`. Write one line of `format_evidence`
+naming the frames that prove it (e.g. "f_004–f_009: two copies of the creator side by side").
+
+1. Another video is visible on screen (inset, split screen or stitched) → `reaction`
+2. The same person appears **twice in one frame** → `clone`
+3. The same person alternates between two looks, positions or characters in a dialogue → `talking_back_forth`
+4. A whiteboard (or paper or a tablet) being written on appears in ≥ 30% of the overview frames → `whiteboard`
+5. The speaker is composited over an image or video background → `green_screen`
+6. An off-camera voice asks a question and on-camera people answer, often into a handheld mic → `qa`
+7. No speaker is on camera in ≥ 70% of the overview frames:
+   - the story is carried by on-screen text over music, with a new image every 1 to 3 seconds → `audio_broll_text`
+   - otherwise → `voiceover`
+8. The speaker is doing an unrelated task while talking (cooking, cleaning, makeup, driving) → `multitasking`
+9. The location or background changes **3 or more times** → `setting_change`
+10. Props or objects are used to demonstrate the point → `visual_prop`
+11. `avg_shot_s ≤ 2.5` in one location → `shot_angle_change`
+12. None of the above → `talking_head`
+
+If you couldn't look at the video, use `unknown`.
+
+### Step 3.4: Detect series content
+
+1. **Look for an episode marker** in the verbal hook, the written hook and the caption. These patterns count (not case-sensitive):
+   `day N`, `part N`, `episode N`, `ep N`, `lesson N`, `lesson N of M`, `step N`, `week N`, `month N`, `#N`, `N of M`.
+2. **Confirm it with sibling episodes.** Read the captions (and titles) of the creator's other reels. In Mode S you already
+   have them from `/v1/instagram/user/reels`; otherwise make 1 call to that endpoint.
+   `series.is_series = true` only if **3 or more** of the creator's reels share the same marker pattern with different
+   numbers, or the same running premise ("building X", "trying to Y").
+3. **Classify the series type.** Use the first rule that matches:
+   - marker `day N`, and the sibling post dates are mostly 1 to 2 days apart → `daily`
+   - marker `lesson N`, or each episode teaches a different lesson → `lesson`
+   - marker `step N` or `part N`, where each episode is one step of the same process → `step_by_step`
+   - one stated goal with updates that aren't daily (`week N`, "update", irregular dates) → `progress_update`
+4. **Record:**
+
+   | Field | Meaning |
+   |---|---|
+   | `series.series_type` | The type from step 3 |
+   | `series.episode_marker` | The exact text, e.g. "Day 71" |
+   | `series.premise` | One sentence: the goal or promise of the series |
+   | `series.goal_restated_in_hook` | true or false |
+   | `series.has_cliffhanger` | true if the last beat before the CTA is `LOOP` |
+   | `series.evidence` | URLs of at least 2 sibling episodes |
+
+   If it isn't a series: `{"is_series": false}`.
 
 ### `03_elements/O001.json` schema
 
 ```json
 {
   "outlier_id": "O001",
-  "transcript_source": "supadata",
+  "stats": {"views": 126000, "creator_followers": 18000, "outlier_ratio": 7.0, "posted_date": "2026-08-14"},
+  "post_type": "reel", "carousel_type": null,
+  "transcript_source": "scrapecreators", "timestamps": true,
   "duration_s": 41,
   "topic": "crate training",
   "verbal_hook": {"text": "<exact words>", "end_ms": 3400},
   "written_hook": {"text": "<exact on-screen text>", "confidence": "seen"},
   "visual_hook": {"text": "Creator stacks three glass containers on the counter.", "confidence": "seen"},
-  "value": {"summary": "...", "measurable": true, "source_type": "personal_experience"},
-  "angle": "tutorial", "delivery": "educational", "story_type": null,
-  "beats": [{"label": "HOOK", "text": "..."}, {"label": "NAME_METHOD", "text": "..."}, {"label": "STEP", "text": "..."}],
-  "complexity": "easy",
-  "cta": {"type": "freebie", "text": "<exact words>"},
-  "format": "visual_prop",
-  "editing_notes": ["captions centered, two colors", "item labels pop in"],
+  "hook_pattern": "niche_specific",
+  "angle": "tutorial",
+  "video_type": "none",
+  "delivery": "educational", "story_type": null,
+  "series": {"is_series": false},
   "content_type": "educational", "funnel": "tofu",
+  "beats": [{"label": "HOOK", "text": "..."}, {"label": "NAME_METHOD", "text": "..."}, {"label": "STEP", "text": "..."}],
+  "complexity": "easy", "structure_class": "easy_educational",
+  "structure_pattern": "HOOK → NAME_METHOD → STEP×3 → EXAMPLE → RECAP → CTA",
+  "word_count": 98, "words_per_second": 2.4,
+  "value": {"summary": "...", "measurable": true, "source_type": "personal_experience"},
+  "cta": {"type": "freebie", "mechanic": "comment_keyword", "text": "<exact words>"},
+  "format": "visual_prop", "format_evidence": "f_002–f_011: holds up each container as it is named",
+  "editing": {"captions": "word_by_word, center, 2 colors", "text_overlays": 4, "avg_shot_s": 2.9,
+              "audio": "voice_plus_music", "visual_types": ["talking_shot", "props", "b_roll"]},
   "transcript": [{"text": "...", "offset": 0, "duration": 1800}]
 }
 ```
 
-`confidence` is one of `seen`, `cover_only` or `unknown`.
+`confidence` is one of `seen`, `cover_only` or `unknown`. A series example:
+`"series": {"is_series": true, "series_type": "daily", "episode_marker": "Day 71", "premise": "Renovating a bowling alley in
+100 days", "goal_restated_in_hook": true, "has_cliffhanger": true, "evidence": ["<url>", "<url>"]}`.
 
 ### Gate 3
 
-- [ ] Every extracted outlier has all seven factors filled (or an explicit `null` or `unknown` with a confidence value)
+- [ ] Every teardown file has **all 17 elements** filled (or an explicit `null` or `unknown` with a confidence value)
 - [ ] `verbal_hook.text` is copied exactly from the transcript
 - [ ] Every sentence of the transcript is covered by exactly one beat
+- [ ] `format_evidence` is filled whenever `format` isn't `unknown`
+- [ ] Every series has sibling-episode `evidence`
 - [ ] Every label is from the closed vocabularies
+- [ ] `<m>/tmp/` is deleted
 
 ---
 
 ## Phase 4: Templatize
 
-**Goal:** two template banks: `04_hook_templates.json` (verbal, written and visual hook madlibs) and
-`04_structure_templates.json` (full-script madlibs). A template MUST read like a fill-in-the-blank form that works in
-**any** niche.
+**Goal:** four template banks, built from the teardown files:
+
+| File | What it holds | Built from teardown elements |
+|---|---|---|
+| `04_hook_templates.json` | Verbal, written and visual hook madlibs | 4, 5, 6, 7, 8 |
+| `04_structure_templates.json` | Full-script madlibs (the beats) | 9, 10, 12, 13, 15 |
+| `04_format_blueprints.json` | How to *film and edit* each format | 16, 17 |
+| `04_series_blueprints.json` | How to build a series episode | 11 |
+
+Every template MUST read like a fill-in-the-blank form that works in **any** niche.
 
 ### Step 4.1: The templatizing procedure (use it for every hook and every structure)
 
@@ -686,11 +873,11 @@ whose `why_saved` includes "structure", and (3) the highest `outlier_ratio`.
 - Make **one verbal hook template per outlier** (from `verbal_hook`), **one written hook template** (from `written_hook`,
   if not null), and **one visual hook template** (from `visual_hook`).
 - A visual hook template describes a filmable action with slots, e.g. "Pulls {{N:NUMBER}} {{ITEM:ITEM}}s out of a bag one at a time."
-- Tag every hook template with the `angle` it suits.
+- Tag every hook template with the `angle` it suits and the source's `hook_pattern`.
 
 ```json
 {"hook_templates": [{
-  "id": "H001", "hook_type": "verbal", "angle": "tutorial", "source_outliers": ["O001"],
+  "id": "H001", "hook_type": "verbal", "angle": "tutorial", "hook_pattern": "niche_specific", "source_outliers": ["O001"],
   "source_urls": ["https://www.instagram.com/reel/XXXX/"],
   "template": "I wasted {{COST:COST}} on {{BAD_HABIT:MISTAKE}} until I tried this.",
   "slots": [
@@ -710,13 +897,15 @@ Length limits for filled hooks (playbook default): **verbal ≤ 15 words** (abou
 1. Take the outlier's `beats` list.
 2. Templatize **each beat's text** with the procedure in 4.1.
 3. Keep the beats in the same order. A template is the ordered list of beats, each with its templated line or lines.
-4. Copy `delivery`, `angle`, `story_type`, `complexity` and the `cta.type` from the element file.
+4. Copy `delivery`, `angle`, `story_type`, `video_type`, `complexity`, `structure_class`, `structure_pattern` and `cta.type`
+   from the teardown file. Set `series_episode: true` if the source is a series episode.
 5. Add `target_words`: the source transcript's word count ±20%.
 
 ```json
 {"structure_templates": [{
   "id": "T001", "source_outliers": ["O001"], "source_urls": ["https://www.instagram.com/reel/XXXX/"],
-  "delivery": "educational", "angle": "tutorial", "story_type": null, "complexity": "easy",
+  "delivery": "educational", "angle": "tutorial", "story_type": null, "video_type": "none",
+  "complexity": "easy", "structure_class": "easy_educational", "series_episode": false,
   "pattern": "Costly habit → named rule → N steps → week example → recap → freebie",
   "target_words": [78, 118],
   "beats": [
@@ -737,17 +926,70 @@ Length limits for filled hooks (playbook default): **verbal ≤ 15 words** (abou
 Note: the HOOK and CTA beats are always placeholders. The hook comes from the hook stack and the CTA from the month
 plan (Phase 5). This lets any structure combine with any hook stack.
 
-### Step 4.4: Bank minimums (playbook default)
+### Step 4.4: Format blueprints → `04_format_blueprints.json`
 
-- Hook templates: at least `proven_slots` of each hook type (verbal, written, visual)
+A format blueprint is a **filming and editing madlib**: the format turned into instructions anyone can follow for any
+script. Make one blueprint per distinct `format` found in the teardowns, built from the best example (the highest
+`outlier_ratio`), using the outliers' `format_evidence` and `editing` fields.
+
+1. **Roles:** who or what is on screen (e.g. "A = the right way, B = the wrong way" for `clone`).
+2. **Shot rule:** when the shot changes, and the target `avg_shot_s` (the source's value).
+3. **Line rule:** how script lines map to shots or roles (e.g. "alternate A and B every line").
+4. **On-screen text rule:** captions style, labels and the written hook position.
+5. **Audio rule:** from `editing.audio`.
+6. **Props or locations needed,** as slots (e.g. `{{PROP_1:ITEM}}`).
+7. **Neutrality check:** nothing from the source's niche, people or set.
+
+```json
+{"format_blueprints": [{
+  "id": "F001", "format": "clone", "source_outliers": ["O014"], "source_urls": ["https://www.instagram.com/reel/YYYY/"],
+  "roles": {"A": "{{CONTRAST_A:CONTRAST_A}} version (left, warm outfit)", "B": "{{CONTRAST_B:CONTRAST_B}} version (right, dark outfit)"},
+  "shot_rule": "Locked-off camera. Film A's lines, then B's lines in the same spot, and composite side by side. Cut on every line.",
+  "target_avg_shot_s": 1.8,
+  "line_rule": "Alternate A and B every line. The last line is A only, delivering the takeaway.",
+  "text_rule": "Label each side with its role in the primary font. Word-by-word captions under each speaker.",
+  "audio_rule": "voice_plus_music, music low",
+  "needs": ["tripod", "two outfits", "{{PROP_1:ITEM}}"]
+}]}
+```
+
+### Step 4.5: Series blueprints → `04_series_blueprints.json`
+
+Make one blueprint per **series** found (`series.is_series: true`). If the teardowns found none, make none. Don't invent a
+series pattern.
+
+1. **Episode hook template:** templatize the episode marker and the goal restatement, e.g.
+   "Day {{N:NUMBER}} of {{GOAL:OUTCOME}}." or "Lesson {{N:NUMBER}} of {{TOTAL:NUMBER}}: {{LESSON_TITLE:TOPIC}}."
+2. **Episode beats:** the beat pattern every episode follows, e.g. `HOOK(marker + goal) → RESULT(today's update) → TURN(problem or win) → LESSON → LOOP → CTA(follow)`.
+3. **Cadence:** `daily`, or the source's typical days between episodes.
+4. **End condition:** what ends the series (the goal reached, N lessons, the last step).
+5. **Cliffhanger line templates:** 2 or 3 `LOOP` madlibs, e.g. "Tomorrow I find out if {{RISK:STORY_MOMENT}}."
+6. **Series plan fields for Phase 5:** `premise_slot` (`{{PREMISE:OUTCOME}}`) and `episodes_planned`.
+
+```json
+{"series_blueprints": [{
+  "id": "S-BP01", "series_type": "daily", "source_outliers": ["O022"], "source_urls": ["https://www.instagram.com/reel/ZZZZ/"],
+  "episode_hook": "Day {{N:NUMBER}} of {{GOAL:OUTCOME}}.",
+  "episode_beats": "HOOK(marker + goal) → RESULT → TURN → LESSON → LOOP → CTA(follow)",
+  "cadence_days": 1, "end_condition": "goal reached",
+  "loop_templates": ["Tomorrow I find out if {{RISK:STORY_MOMENT}}.", "But {{PROBLEM:PAIN}}, and I have no idea how to fix it yet."],
+  "premise_slot": "{{PREMISE:OUTCOME}}", "episodes_planned": null
+}]}
+```
+
+### Step 4.6: Bank minimums (playbook default)
+
+- Hook templates: at least `proven_slots` of each hook type (verbal, written, visual). In bank-only mode, at least 20 of each
 - Structure templates: at least 6, including **≥ 2 storytelling** and **≥ 2 complex**
 - Every one of the 7 angles is covered by at least one hook template, if your outliers allow it
+- Format blueprints: one for every format the month plan will use, and at least 3 different formats
+- Series blueprints: one per series found
 
 ### Gate 4
 
-- [ ] Every template passes the neutrality check (it doesn't reveal the source niche)
+- [ ] Every template and blueprint passes the neutrality check (it doesn't reveal the source niche)
 - [ ] Every slot has a `type`, a `rule` and a `from`
-- [ ] Every template lists its source outliers and URLs
+- [ ] Every template and blueprint lists its source outliers and URLs
 - [ ] Bank minimums are met, or the shortfall is noted in `06_qa_report.md`
 
 ---
@@ -765,6 +1007,12 @@ Do these steps **for each slot, in slot order**.
 - `content_type = educational` → rotate through the 7 angles so none repeats until all have been used, skipping
   angles that have no hook template.
 - `bucket = double_down` → skip ahead to [Phase 7, step 7.3](#step-73-double-down-recipe).
+- `series_episode: true` → use the series blueprint:
+  - the HOOK is the `episode_hook`, filled with the next episode number and the premise;
+  - the body follows `episode_beats`;
+  - the last body line is a `LOOP` filled from `loop_templates`;
+  - the CTA is `follow` ("Follow so you don't miss Day {{N+1}}").
+  The premise MUST come from a `big_goal` or `challenge` story in the bank. Keep the episode numbering going across months.
 
 ### Step 5.2: Pick the Client Bank material (the value)
 
@@ -806,6 +1054,8 @@ Do these steps **for each slot, in slot order**.
 - Series episodes → `shot_angle_change`, `visual_prop`, `voiceover` or `setting_change`.
 - Comparison or do-vs-don't → prefer `clone` or `talking_back_forth`.
 - Otherwise pick any format from [A5](#a5-formats) **except `talking_head`**, which is only allowed for `experiment` slots.
+- Prefer formats that have a **format blueprint** in `04_format_blueprints.json`. Apply the blueprint's roles, shot rule,
+  line rule, text rule and audio rule to the SHOT and EDIT notes, and record its ID in the script header.
 - If the format changes the script (`clone` and `talking_back_forth` need two voices), label each line with
   `A:` / `B:`. `reaction` must name the clip to react to.
 
@@ -821,7 +1071,7 @@ Do these steps **for each slot, in slot order**.
 | Funnel / content type | tofu / educational |
 | Topic | crate training |
 | Angle / delivery / story type | tutorial / educational / — |
-| Format | visual_prop |
+| Format | visual_prop (blueprint F003) |
 | CTA | freebie, keyword PUPPY |
 | Structure template | T001 (from O001) |
 | Hook templates | verbal H001 (O001), written H014 (O006), visual H027 (O011) |
@@ -1127,6 +1377,67 @@ Never send viewers to "the link in bio" for a freebie or offer. Use the comment-
   (one goal; updates whenever there's progress), `lesson` (one lesson per episode), `step_by_step` (one step of a process per episode)
 - `carousel_type` (if asked for carousels): `tutorial`, `do_dont`, `tip_hack`, `storytelling`, `transformation`, `problem_solution`, `list`, `types`
 
+### A11. Video types
+
+Check in this order and use the first match.
+
+| ID | Signals |
+|---|---|
+| `ranking` | Items are scored or rated one by one ("Item: 8/10") |
+| `tier_list` | Items are placed in tiers (S, A, B…) |
+| `rapid_fire_qa` | Quick questions with one-word or one-line answers ("This or that?") |
+| `levels` | "[N] levels of…": the same thing at rising difficulty or quality |
+| `smart_vs_dumb` | A smart and a clueless person (or couple) handle the same situation |
+| `good_better_best` | Options ranked bad → good → excellent |
+| `if_then_list` | Repeated "If you do X, Y happens" lines |
+| `two_people_compare` | "Two people are trying to…", following two contrasting paths |
+| `day_in_the_life` | Follows a day of the creator's life or work |
+| `founder_story` | How the person or business started |
+| `product_story` | How a product or service was created |
+| `metric_update` | Shares a number: income, revenue, followers or progress |
+| `cost_breakdown` | Itemizes what something cost |
+| `retrospective` | "What I'd do differently" after a phase, win or loss |
+| `fake_case_study_brand` | "If I were running [big brand or celebrity], here's what I'd do" |
+| `fake_case_study_situation` | "If I were starting from scratch, or had $X, here's what I'd do" |
+| `none` | None of the above |
+
+### A12. Hook patterns
+
+Check in this order. Use the first pattern whose frame words appear in the verbal or written hook.
+
+| ID | Frame words |
+|---|---|
+| `is_it_possible` | "Is it possible to…" |
+| `time_ago` | "[N] days / weeks / months / years ago, I…" |
+| `did_you_know_if` | "Did you know (that) if you…" |
+| `levels_of` | "[N] levels of…" |
+| `smart_vs_dumb` | "smart … versus / vs dumb …" |
+| `good_better_best` | "[X] is bad, [Y] is good, [Z] is excellent" |
+| `not_a_flex` | "This is not a flex, but…" / "Not to flex, but…" |
+| `picture_of` | "This is a picture of…" |
+| `this_to_this` | "How I got [X] from this to this in [time]" |
+| `stop_doing` | Opens with "Stop…" or "Don't…" |
+| `if_you_audience` | "If you're a [audience]…" / "If you [situation]…" |
+| `number_list` | "[N] ways / tips / mistakes / things…" |
+| `niche_specific` | No universal pattern. It can still be templatized |
+
+### A13. Audio types
+| ID | Meaning |
+|---|---|
+| `original_voice` | Speech only |
+| `voice_plus_music` | Speech with music underneath |
+| `emotional_music` | Slow or emotional music carrying a story (often with on-screen text) |
+| `trending_audio` | A named, non-original sound that many reels use (its audio page shows a high reel count) |
+| `music_only` | Music with no speech, not trending |
+| `none` | Silent |
+| `unknown` | Couldn't check |
+
+### A14. Post types
+`reel`, `carousel`, `photo`
+
+### A15. CTA mechanics
+`comment_keyword` (comment a word → automatic DM), `follow`, `link_in_bio`, `dm_keyword`, `save_or_share`, `none`
+
 ---
 
 ## Appendix B: Prompts for sub-tasks
@@ -1259,8 +1570,15 @@ Element record (key fields):
     {"label": "RECAP", "text": "That's it: three containers, forty-five minutes on Sunday."},
     {"label": "CTA", "text": "Comment PREP and I'll send you my five sauces."}
   ],
-  "complexity": "easy", "cta": {"type": "freebie", "text": "Comment PREP and I'll send you my five sauces."},
-  "format": "visual_prop", "content_type": "educational", "funnel": "tofu"
+  "complexity": "easy", "structure_class": "easy_educational",
+  "structure_pattern": "HOOK → NAME_METHOD → STEP×3 → EXAMPLE → RECAP → CTA",
+  "word_count": 98, "words_per_second": 2.4,
+  "post_type": "reel", "hook_pattern": "niche_specific", "video_type": "none", "series": {"is_series": false},
+  "cta": {"type": "freebie", "mechanic": "comment_keyword", "text": "Comment PREP and I'll send you my five sauces."},
+  "format": "visual_prop", "format_evidence": "f_003–f_012: picks up each container as it is named",
+  "editing": {"captions": "word_by_word, center, 2 colors", "text_overlays": 5, "avg_shot_s": 2.9,
+              "audio": "voice_plus_music", "visual_types": ["talking_shot", "props"]},
+  "content_type": "educational", "funnel": "tofu"
 }
 ```
 
@@ -1274,6 +1592,7 @@ Why `easy`: "Container one/two/three: …" repeats one sentence shape 3 times wi
 | H014 | written | "{{N:NUMBER}} steps to {{OUTCOME:OUTCOME}}" | O006 (its cover read "3 steps to a debt-free year", invented) |
 | H027 | visual | "Pulls {{N:NUMBER}} {{ITEM:ITEM}}s out of a bag one at a time and sets each down." | O011 |
 | T001 | structure | HOOK → "Here's the {{N}}-{{UNIT}} rule." → [REPEAT N] "{{UNIT}} {{ORDINAL}}: {{STEP_ACTION}}, {{STEP_EXAMPLE}}." → "{{SITUATION_1}}: {{APPLY_1}}. {{SITUATION_2}}: {{APPLY_2}}." → "That's it: {{N}} {{UNIT}}s, {{TIME_COST}}." → CTA | O001 |
+| F003 | format blueprint | `visual_prop`: hold up {{ITEM}} as each one is named; close-up on each item; its label pops in on screen; avg shot ~3 s; voice + low music | O001 |
 
 Neutrality check on T001: with the slots hidden it reads "Here's the ___-___ rule. ___ one: ___, ___. … That's it: ___ ___s,
 ___." Nothing reveals meal prep, so it **passes**.
@@ -1345,8 +1664,8 @@ Copy this into `02_research_log.md` at the start of every run, and tick boxes as
 - [ ] **Phase 0:** profile and Client Bank complete (Gate 0), or gaps listed
 - [ ] **Phase 1:** `01_month_plan.json`, N slots, mix verified (Gate 1)
 - [ ] **Phase 2:** keyword list built; mode chosen and logged; `GET /me` balance recorded; outlier quota met (Gate 2)
-- [ ] **Phase 3:** first transcript's credit cost measured; element files written; seven factors filled (Gate 3)
-- [ ] **Phase 4:** hook and structure templates built; neutrality check passed; minimums met (Gate 4)
+- [ ] **Phase 3:** first transcript's credit cost measured; every outlier torn down with all 17 elements; format evidence and series evidence recorded; tmp/ deleted (Gate 3)
+- [ ] **Phase 4:** hook templates, structure templates, format blueprints and series blueprints built; neutrality check passed; minimums met (Gate 4)
 - [ ] **Phase 5:** every slot has a script file and an ideation row (Gate 5)
 - [ ] **Phase 6:** QA report written; every script PASS or FAILED with a reason; client needs listed (Gate 6)
 - [ ] **Phase 7** (only with analytics): review written; own outliers marked; double downs queued
