@@ -786,8 +786,12 @@ function bars(list) {
 function nicheInspector() {
   const pt = S.patterns;
   if (!project()) return `<div class="insp-empty"><h3>Niche at a glance</h3><p class="small">Base rates and the most common patterns show here once you have research.</p></div>`;
+  // Without the AI pass, hook pattern, format and angle are only pattern matches: say so rather than present them as findings.
+  const torn = S.outliers.filter((o) => o.teardown_status === "done" && o.td);
+  const noAi = torn.filter((o) => !o.td.ai).length;
+  const pending = noAi ? `<div class="notice">${ICON.alert}<div>${noAi} of ${torn.length} teardowns are still waiting for the AI pass, so the counts below come from pattern matching only.</div></div>` : "";
   return `<div class="insp-sec"><h3>How often reels take off here</h3>${ratesPanel(S.rates)}</div>
-    ${pt && pt.teardowns ? `
+    ${pt && pt.teardowns ? `${pending}
     <div class="insp-sec"><h3>Hook patterns</h3>${bars(pt.hook_pattern)}</div>
     <div class="insp-sec"><h3>Formats</h3>${bars(pt.format)}</div>
     <div class="insp-sec"><h3>Angles</h3>${bars(pt.angle)}</div>
