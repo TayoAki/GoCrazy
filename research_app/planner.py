@@ -229,6 +229,15 @@ def _chat_json(model, system, user, temperature):
         return _parse(fixed), cost + fix_cost
 
 
+def _outline_problems(posts):
+    """Breaches of outline rule 6, which the model sometimes ignores."""
+    problems = [f"slot {p.get('slot')} uses the talking_head format" for p in posts if p.get("format") == "talking_head"]
+    for key in ("format", "angle"):
+        problems += [f"{key} {value} is used {n} times (max 2)" for value, n in Counter(p.get(key) for p in posts).items()
+                     if value and n > 2]
+    return problems
+
+
 def _generate(project_id, about, followers, start_date, posts, model, teardowns):
     with db.connect() as conn:
         project = conn.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone()
@@ -242,10 +251,16 @@ def _generate(project_id, about, followers, start_date, posts, model, teardowns)
     cost = 0.0
 
     # Stage 1: the week's outline, so formats and angles are spread across days.
-    outline, c = _chat_json(model, OUTLINE_SYSTEM.format(**vocab),
-                            context + f"SLOTS (one post each, in order):\n{json.dumps(slots)}\n\n"
-                            f"TEARDOWNS OF PROVEN OUTLIERS ({len(teardowns)}):\n{json.dumps(teardowns, ensure_ascii=False)}", 0.6)
+    outline_user = (context + f"SLOTS (one post each, in order):\n{json.dumps(slots)}\n\n"
+                    f"TEARDOWNS OF PROVEN OUTLIERS ({len(teardowns)}):\n{json.dumps(teardowns, ensure_ascii=False)}")
+    outline, c = _chat_json(model, OUTLINE_SYSTEM.format(**vocab), outline_user, 0.6)
     cost += c
+    problems = _outline_problems(outline.get("posts", []))
+    if problems:  # one revision pass when the model ignores rule 6
+        outline, c = _chat_json(model, OUTLINE_SYSTEM.format(**vocab),
+                                outline_user + f"\n\nYOUR PREVIOUS OUTLINE:\n{json.dumps(outline, ensure_ascii=False)}\n\n"
+                                "Return it again with only these problems fixed:\n- " + "\n- ".join(problems), 0.3)
+        cost += c
     by_slot = {p.get("slot"): p for p in outline.get("posts", [])}
     if len(by_slot) < len(slots):
         raise RuntimeError(f"The outline had {len(by_slot)} of {len(slots)} posts")

@@ -36,8 +36,9 @@
   color-scheme: light;
   accent-color: var(--accent);
 }
+/* Dark: follows the OS unless the page is told otherwise (data-theme wins both ways). */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: #121211; --panel: #1b1b1a; --panel-2: #20201f; --line: #2d2c2a; --line-strong: #403e3b;
     --text: #ecebe7; --muted: #b0aea7; --faint: #8f8c85;
     --accent: #f06a4b; --accent-hover: #f48266; --accent-ink: #1a0d09; --accent-soft: #3a1f18;
@@ -47,6 +48,15 @@
     color-scheme: dark;
   }
 }
+:root[data-theme="dark"] {
+  --bg: #121211; --panel: #1b1b1a; --panel-2: #20201f; --line: #2d2c2a; --line-strong: #403e3b;
+  --text: #ecebe7; --muted: #b0aea7; --faint: #8f8c85;
+  --accent: #f06a4b; --accent-hover: #f48266; --accent-ink: #1a0d09; --accent-soft: #3a1f18;
+  --good: #6cc792; --good-soft: #1a3024; --warn: #e2b04f; --warn-soft: #33290f; --bad: #ef7f73; --bad-soft: #3a1c19;
+  --info: #8fa9ec; --info-soft: #1d2539; --ai: #b99af0; --ai-soft: #2a2140; --chip: #262523;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, .4); --shadow-md: 0 8px 24px rgba(0, 0, 0, .45);
+  color-scheme: dark;
+}
 
 /* ---------- base ---------- */
 * { box-sizing: border-box; }
@@ -55,7 +65,7 @@ body {
   margin: 0; background: var(--bg); color: var(--text); font: 400 var(--t-md)/1.5 var(--font);
   -webkit-font-smoothing: antialiased;
   display: grid; grid-template-columns: 60px 252px minmax(0, 1fr) 340px; grid-template-rows: minmax(0, 1fr) 30px;
-  height: 100vh; overflow: hidden;
+  height: 100%; overflow: hidden;
 }
 button, input, select, textarea { font: inherit; color: inherit; }
 a { color: inherit; text-underline-offset: 3px; }
