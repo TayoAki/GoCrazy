@@ -31,3 +31,11 @@ the channel owner's content.
 [`MASTER_OUTLINE.md`](MASTER_OUTLINE.md) organizes everything taught across the 13
 [@PersonalBrandLaunch](https://www.youtube.com/@PersonalBrandLaunch) videos by
 topic. Each concept covers what it is, how to apply it, and an example.
+
+## Agent playbook
+
+[`AGENT_PLAYBOOK.md`](AGENT_PLAYBOOK.md) is the step-by-step operating manual for an AI agent. It researches
+outliers (ScrapeCreators), extracts their elements, builds fill-in-the-blank templates, and writes original scripts
+for a client's niche (OpenRouter), with optional rendering (Hypit). In this repo, Claude Code picks it up as the
+`short-form-content` skill (`.claude/skills/short-form-content/SKILL.md`). API keys go in environment variables
+(`SCRAPECREATORS_API_KEY`, `OPENROUTER_API_KEY`, `SUPADATA_API_KEY`), never in files.

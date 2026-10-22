@@ -6,3 +6,6 @@ __pycache__/
 transcripts/
 # Quotes roughly a quarter of the transcripts verbatim, so it stays local like transcripts/.
 RECIPE_BOOK.md
+
+# Agent run outputs (client data)
+work/
