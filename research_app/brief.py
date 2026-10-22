@@ -120,21 +120,26 @@ def post_markdown(post, rates, sources, refs=None, level=1):
     if says:
         out += ["", f"{h}# Teleprompter", "", "Just the words, in order.", "", *[x for s in says for x in (s, "")]]
     for sc_id in post.get("source_outliers") or []:
-        ref, src = (refs or {}).get(sc_id), sources.get(sc_id)
-        if not ref or not src:
-            continue
-        out += ["", f"{h}# Reference breakdown: @{src['username']} ({src['ratio']}×)", "",
-                f"{src['url']} · scene by scene in SEALCaM. A scene that continues the same shot is a segment of a long hold.", ""]
-        for sc in ref["scenes"]:
-            how = "hard cut" if sc.get("cut", True) else "same shot continues"
-            flashes = f" · {sc['flash_cuts']} flash cuts" if sc.get("flash_cuts") else ""
-            out += [f"{h}## Scene {sc['i']} · {sc['start']:.1f}–{sc['end']:.1f} s · {sc.get('beat') or 'n/a'} · {how}{flashes}", ""]
-            if sc.get("said"):
-                out.append(f"- **Said:** “{sc['said']}”")
-            if sc.get("on_screen_text"):
-                out.append(f"- **On screen:** {sc['on_screen_text']}")
-            out += _sealcam(sc, lambda x: x) + [""]
+        if (refs or {}).get(sc_id) and sources.get(sc_id):
+            out += [""] + reference_markdown(sources[sc_id], refs[sc_id], level)
     return "\n".join(out).rstrip() + "\n"
+
+
+def reference_markdown(src, ref, level=1):
+    h = "#" * level
+    out = [f"{h}# Reference breakdown: @{src['username']} ({src['ratio']}×)", "",
+           f"{src['url']} · scene by scene in SEALCaM. A scene that continues the same shot is a segment of a long hold.", ""]
+    for sc in ref["scenes"]:
+        how = "hard cut" if sc.get("cut", True) else "same shot continues"
+        n = sc.get("flash_cuts") or 0
+        flashes = f" · {n} flash cut{'' if n == 1 else 's'}" if n else ""
+        out += [f"{h}## Scene {sc['i']} · {sc['start']:.1f}–{sc['end']:.1f} s · {sc.get('beat') or 'n/a'} · {how}{flashes}", ""]
+        if sc.get("said"):
+            out.append(f"- **Said:** “{sc['said']}”")
+        if sc.get("on_screen_text"):
+            out.append(f"- **On screen:** {sc['on_screen_text']}")
+        out += _sealcam(sc, lambda x: x) + [""]
+    return out
 
 
 def plan_exports(project_id, data):
@@ -156,8 +161,14 @@ def plan_exports(project_id, data):
         week.append(f"| {_day(p['date'])} | {title} | {p['funnel'].upper()} | {_label(p.get('format')).capitalize()} | "
                     f"{_pct((p.get('odds') or {}).get('p5'))} ({(p.get('odds') or {}).get('band', 'n/a')}) |")
     week.append("")
-    for p in posts:
-        week += ["---", "", post_markdown(p, rates, sources, refs, level=2)]
+    for p in posts:  # each source's breakdown appears once, at the end, rather than under every post using it
+        week += ["---", "", post_markdown(p, rates, sources, level=2)]
+    used = [s for s in dict.fromkeys(s for p in posts for s in p.get("source_outliers") or []) if s in refs and s in sources]
+    if used:
+        week += ["---", "", "# Reference breakdowns", "",
+                 "The outliers this week borrows from, scene by scene. Shots in the shot lists name the scene they borrow from.", ""]
+        for s in used:
+            week += reference_markdown(sources[s], refs[s], level=2) + [""]
     return {
         "week": {"filename": f"week-of-{first}.md", "markdown": "\n".join(week).rstrip() + "\n"},
         "posts": {p["slot"]: {"filename": f"{p['date']}-{_slug(p.get('title'))}.md",
