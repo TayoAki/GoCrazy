@@ -15,6 +15,7 @@ so no credits are spent on them again (use --force to refetch).
 """
 
 import argparse
+import html
 import json
 import os
 import re
@@ -137,6 +138,16 @@ def timestamp(ms):
     return f"{seconds // 3600:02d}:{seconds % 3600 // 60:02d}:{seconds % 60:02d}"
 
 
+def unescape(text):
+    # Some captions arrive HTML-escaped more than once (e.g. "&amp;#39;"), so unescape until stable.
+    for _ in range(3):
+        decoded = html.unescape(text)
+        if decoded == text:
+            break
+        text = decoded
+    return text
+
+
 def transcript_text(record):
     meta = record.get("metadata") or {}
     transcript = record["transcript"]
@@ -152,9 +163,9 @@ def transcript_text(record):
 
     content = transcript["content"]
     if isinstance(content, str):
-        body = content
+        body = unescape(content)
     else:
-        body = "\n".join(f"[{timestamp(c['offset'])}] {c['text'].strip()}" for c in content)
+        body = "\n".join(f"[{timestamp(c['offset'])}] {unescape(c['text']).strip()}" for c in content)
     return "\n".join(header) + "\n\n" + body + "\n"
 
 

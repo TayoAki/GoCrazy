@@ -22,3 +22,12 @@ transcript). Use `--no-metadata` to halve that. The default `--mode native` only
 uses captions that YouTube already has. `--mode auto` falls back to AI
 transcription for videos without captions, which costs more. Re-running skips
 videos that are already downloaded.
+
+`transcripts/` is gitignored because this repo is public and the transcripts are
+the channel owner's content.
+
+## Master outline
+
+[`MASTER_OUTLINE.md`](MASTER_OUTLINE.md) organizes everything taught across the 13
+[@PersonalBrandLaunch](https://www.youtube.com/@PersonalBrandLaunch) videos by
+topic. Each concept covers what it is, how to apply it, and an example.
