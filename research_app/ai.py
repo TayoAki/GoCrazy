@@ -316,7 +316,15 @@ def madlib(data, model):
     body = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
     if resp.status_code != 200 or "choices" not in body:
         raise RuntimeError(f"OpenRouter {resp.status_code}: {(body.get('error') or {}).get('message') or resp.text[:200]}")
-    match = re.search(r"\{.*\}", body["choices"][0]["message"]["content"] or "", re.S)
-    if not match:
-        raise RuntimeError("The model did not return JSON")
-    return json.loads(match.group(0)), body.get("usage") or {}
+    reply, usage = body["choices"][0]["message"]["content"] or "", body.get("usage") or {}
+    try:
+        return json.loads(re.search(r"\{.*\}", reply, re.S).group(0)), usage
+    except (AttributeError, ValueError):  # long scripts sometimes come back with a broken quote: one repair pass
+        fixed = requests.post(URL, timeout=300, headers={"Authorization": f"Bearer {openrouter_key()}"}, json={
+            "model": model, "temperature": 0, "max_tokens": 8000, "usage": {"include": True},
+            "response_format": {"type": "json_object"},
+            "messages": [{"role": "system", "content": "You repair broken JSON. Reply with only the corrected JSON object, changing nothing else."},
+                         {"role": "user", "content": reply}],
+        }).json()
+        usage = {"cost": (usage.get("cost") or 0) + ((fixed.get("usage") or {}).get("cost") or 0)}
+        return json.loads(re.search(r"\{.*\}", fixed["choices"][0]["message"]["content"] or "", re.S).group(0)), usage

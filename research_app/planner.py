@@ -304,7 +304,8 @@ def source_madlibs(shortcodes, model):
         if not data.get("madlib"):
             try:
                 data = teardown.apply_madlib(data, model)
-            except Exception:
+            except Exception as e:
+                db.log(None, "warning", f"Madlib failed for {row['shortcode']}: {e}")  # the plan goes on from the teardown alone
                 return row["shortcode"], None, 0
             with db.connect() as conn:
                 conn.execute("UPDATE teardowns SET data=?, updated_at=? WHERE shortcode=?", (json.dumps(data), db.now(), row["shortcode"]))
