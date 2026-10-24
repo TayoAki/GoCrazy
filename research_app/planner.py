@@ -440,21 +440,28 @@ def _context(project, about, followers):
             f"Followers: {followers if followers is not None else 'unknown'}\n\n")
 
 
+VOCAB_MIN = 3  # a "name" that turns up in this many different teardowns is the niche's vocabulary (East, Charleston)
+
+
+def _content_lines(d):
+    lines = [(d["fields"].get(k) or {}).get("value") for k in ("verbal_hook", "written_hook", "topic")]
+    lines += [d.get("caption"), (d.get("transcript") or {}).get("text")]
+    return lines + [x for sc in d.get("scenes") or [] for x in (sc.get("said"), sc.get("on_screen_text"))]
+
+
 def source_content(shortcodes, about=""):
     """{teardown id: its own content words (numbers, names)}: what a post must not reuse. Words in the client's own
-    about text are theirs to use, so they're left out."""
+    about text are theirs to use, and words found in several teardowns are the niche's own vocabulary, so both are
+    left out."""
     if not shortcodes:
         return {}
     with db.connect() as conn:
-        rows = conn.execute(f"SELECT shortcode, data FROM teardowns WHERE status='done' AND shortcode IN "
-                            f"({','.join('?' * len(shortcodes))})", list(shortcodes)).fetchall()
-    out = {}
-    for r in rows:
-        d = json.loads(r["data"])
-        lines = [(d["fields"].get(k) or {}).get("value") for k in ("verbal_hook", "written_hook", "topic")]
-        lines += [d.get("caption"), (d.get("transcript") or {}).get("text")]
-        lines += [x for sc in d.get("scenes") or [] for x in (sc.get("said"), sc.get("on_screen_text"))]
-        out[r["shortcode"]] = {w for w in madlib_lines.distinctive(lines) if w not in (about or "")}
+        rows = conn.execute("SELECT shortcode, data FROM teardowns WHERE status='done'").fetchall()
+    lines = {r["shortcode"]: _content_lines(json.loads(r["data"])) for r in rows}
+    texts = [" ".join(x for x in ls if x).lower() for ls in lines.values()]
+    out = {sc: {w for w in madlib_lines.distinctive(ls) if w not in (about or "")} for sc, ls in lines.items() if sc in shortcodes}
+    for sc, ws in out.items():
+        out[sc] = {w for w in ws if sum(bool(re.search(rf"(?<!\w){re.escape(w.lower())}(?!\w)", t)) for t in texts) < VOCAB_MIN}
     return out
 
 
