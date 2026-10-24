@@ -81,7 +81,8 @@ the proven outliers it is based on.
    inside a slot: a fact you don't have becomes a [[placeholder]]. Put the madlib line you filled in "template".
 
 Reply with ONLY a JSON object:
-{{"madlib_source": "the teardown id whose madlib you filled",
+{{"title": "the outline's title, or a new one if what the post teaches had to change",
+ "madlib_source": "the teardown id whose madlib you filled",
  "hook": {{"verbal": "the first sentence spoken (≤15 words)", "written": "on-screen text in the first 3 s (≤7 words)",
           "visual": "one filmable action for the first 3 s", "verbal_template": str, "written_template": str,
           "visual_template": str}},
@@ -574,24 +575,27 @@ def _generate(project_id, about, followers, start_date, posts, model, teardowns)
                           + (f"\n\nYOUR LAST VERSION REUSED THE SOURCE'S OWN CONTENT ({', '.join(avoid)}). Keep the template, "
                              "but fill it with new content: never use these words; use [[placeholders]] for facts you don't have." if avoid else "")
                           + (f"\n\nYOUR LAST VERSION REPEATED THE SOURCE'S OWN VALUE: {'; '.join(copied)}. Keep its template (format, "
-                             "structure, hook pattern, frame words), but teach or tell different specifics: different tips, rules, "
-                             "examples or jokes, all correct; use [[placeholders]] where the creator must supply them." if copied else ""), 0.6)
+                             "structure, hook pattern, frame words), but write every tip, rule, example and joke from scratch: not "
+                             "a paraphrase or a few swapped words, and all correct; use [[placeholders]] where the creator must "
+                             "supply them. Change the title if what the post teaches changes." if copied else ""), 0.6)
 
     values = source_values({t["id"] for t in teardowns})
 
     def finish(slot, d, c):
-        """Check a written post for copied content and value; one rewrite, and whatever is still copied is flagged."""
+        """Check a written post for copied content and value; up to two rewrites, and whatever is still copied is flagged."""
         post = {**by_slot[slot["slot"]], **d}
         copied, c2 = _value_copy(post, values, model)
         c += c2
-        if (hits := _reuse(post, content)) or copied:
+        for _ in range(2):  # up to two rewrites
+            if not ((hits := _reuse(post, content)) or copied):
+                break
             try:
                 d2, c2 = detail(slot, hits, copied)
                 post = {**by_slot[slot["slot"]], **d2}
                 copied, c3 = _value_copy(post, values, model)
                 c += c2 + c3
             except Exception:
-                pass
+                break
         post["reuse"], post["copied_value"] = _reuse(post, content), copied
         return post, c
 
