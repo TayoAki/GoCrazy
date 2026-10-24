@@ -134,6 +134,9 @@ of it the shot lists).
   writes in lowercase, outside headlines) is collected per outlier. A post that reuses any of those numbers, or two or more
   of its names, is rewritten once with those words banned; if it still reuses them it's flagged. Words from the client's
   own description don't count.
+- **No copied value.** The AI then compares each post with its references: the template, hook and topic may match, but
+  the specific tips, rules, examples and jokes must be new. A post that repeats them is rewritten once; what's still
+  repeated is flagged.
 - **Same text format.** Each shot's on-screen text gets the reference's case and the spacing around symbols such as `+`.
   Then it must fit the reference's on-screen madlib (one text block or a run of them), and its line count, punctuation
   and emoji must match the reference. Shots that differ get one AI fix pass; anything still different is flagged on the

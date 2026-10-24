@@ -457,6 +457,44 @@ def source_content(shortcodes, about=""):
     return out
 
 
+VALUE_CHECK_SYSTEM = """You check whether a planned short-form video copies the VALUE of the reference videos it is modelled
+on. Copying the template is the point and is fine: the same format, structure, hook (its opening line may even be the same),
+beat order, frame words and general topic. What may not be copied is a reference's own value: the specific tips, rules,
+steps, tricks, examples, stories or jokes it teaches or tells. Facts any explanation of the topic must state (what a tile
+is called, how many players a game has) don't count. Reply with ONLY a JSON object:
+{"copies": bool, "shared": [one short line per specific tip, rule, example or joke the post repeats from a reference]}"""
+
+
+def source_values(shortcodes):
+    """{teardown id: what the reel teaches or tells}: its value summary, its words and its on-screen text."""
+    if not shortcodes:
+        return {}
+    with db.connect() as conn:
+        rows = conn.execute(f"SELECT shortcode, data FROM teardowns WHERE status='done' AND shortcode IN "
+                            f"({','.join('?' * len(shortcodes))})", list(shortcodes)).fetchall()
+    out = {}
+    for r in rows:
+        d = json.loads(r["data"])
+        scenes = d.get("scenes") or []
+        words = (d.get("transcript") or {}).get("text") or " ".join(sc.get("said") or "" for sc in scenes)
+        out[r["shortcode"]] = {"value": (d["fields"].get("value_summary") or {}).get("value"), "words": words[:4000],
+                               "on_screen": [sc["on_screen_text"] for sc in scenes if sc.get("on_screen_text")][:40]}
+    return out
+
+
+def _value_copy(post, values, model):
+    """The specific tips, rules, examples or jokes a post repeats from its own sources (judged by the AI): (lines, cost)."""
+    refs = {s: values[s] for s in post.get("source_outliers") or [] if s in values}
+    if not refs:
+        return [], 0
+    try:
+        got, cost = _chat_json(model, VALUE_CHECK_SYSTEM, f"REFERENCES (by teardown id):\n{json.dumps(refs, ensure_ascii=False)}"
+                               f"\n\nPLANNED POST:\n{_post_text(post)}", 0, 1500)
+    except Exception:
+        return [], 0
+    return ([str(x) for x in got.get("shared") or [] if x] if got.get("copies") else []), cost
+
+
 def _post_text(post):
     hook = post.get("hook") or {}
     return "\n".join(str(x) for x in [post.get("title"), post.get("topic"), hook.get("verbal"), hook.get("written"),
@@ -525,7 +563,7 @@ def _generate(project_id, about, followers, start_date, posts, model, teardowns)
     # Stage 2: each post written in full from its own sources, in parallel.
     teardown_by_id = {t["id"]: t for t in teardowns}
 
-    def detail(slot, avoid=None):
+    def detail(slot, avoid=None, copied=None):
         post = by_slot[slot["slot"]]
         sources = [teardown_by_id[s] for s in post.get("source_outliers") or [] if s in teardown_by_id] or teardowns[:3]
         templates = {s: madlibs[s] for s in post.get("source_outliers") or [] if s in madlibs}
@@ -534,22 +572,35 @@ def _generate(project_id, about, followers, start_date, posts, model, teardowns)
                           f"SOURCE TEARDOWNS:\n{json.dumps(sources, ensure_ascii=False)}\n\n"
                           f"SOURCE MADLIBS (by teardown id):\n{json.dumps(templates, ensure_ascii=False) if templates else '(none)'}"
                           + (f"\n\nYOUR LAST VERSION REUSED THE SOURCE'S OWN CONTENT ({', '.join(avoid)}). Keep the template, "
-                             "but fill it with new content: never use these words; use [[placeholders]] for facts you don't have." if avoid else ""), 0.6)
+                             "but fill it with new content: never use these words; use [[placeholders]] for facts you don't have." if avoid else "")
+                          + (f"\n\nYOUR LAST VERSION REPEATED THE SOURCE'S OWN VALUE: {'; '.join(copied)}. Keep its template (format, "
+                             "structure, hook pattern, frame words), but teach or tell different specifics: different tips, rules, "
+                             "examples or jokes, all correct; use [[placeholders]] where the creator must supply them." if copied else ""), 0.6)
+
+    values = source_values({t["id"] for t in teardowns})
+
+    def finish(slot, d, c):
+        """Check a written post for copied content and value; one rewrite, and whatever is still copied is flagged."""
+        post = {**by_slot[slot["slot"]], **d}
+        copied, c2 = _value_copy(post, values, model)
+        c += c2
+        if (hits := _reuse(post, content)) or copied:
+            try:
+                d2, c2 = detail(slot, hits, copied)
+                post = {**by_slot[slot["slot"]], **d2}
+                copied, c3 = _value_copy(post, values, model)
+                c += c2 + c3
+            except Exception:
+                pass
+        post["reuse"], post["copied_value"] = _reuse(post, content), copied
+        return post, c
 
     with ThreadPoolExecutor(max_workers=4) as pool:
         details = list(pool.map(detail, slots))
+        finished = list(pool.map(lambda x: finish(x[0], *x[1]), zip(slots, details)))
     result = {"posts": []}
-    for slot, (d, c) in zip(slots, details):
+    for post, c in finished:
         cost += c
-        post = {**by_slot[slot["slot"]], **d}
-        if hits := _reuse(post, content):  # one rewrite; whatever is still reused is flagged on the post
-            try:
-                d2, c2 = detail(slot, hits)
-                cost += c2
-                post = {**by_slot[slot["slot"]], **d2}
-            except Exception:
-                pass
-        post["reuse"] = _reuse(post, content)
         result["posts"].append(post)
 
     known = {t["id"] for t in teardowns}

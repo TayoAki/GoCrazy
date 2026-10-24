@@ -162,6 +162,8 @@ def post_markdown(post, rates, sources, refs=None, level=1, cards=None):
     out += [f"- **Risk:** {t(post.get('risk'))}"]
     if post.get("reuse"):
         out.append(f"- **Check:** this script reuses its reference's own content ({', '.join(post['reuse'])}); swap it for the creator's own.")
+    if post.get("copied_value"):
+        out.append(f"- **Check:** this script repeats its reference's own advice: {'; '.join(post['copied_value'])}. Replace it with your own.")
     out.append("")
 
     needs = post.get("needs_from_you") or []

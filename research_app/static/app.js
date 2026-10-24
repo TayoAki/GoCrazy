@@ -771,6 +771,7 @@ function planDay(p, i, rates, planId) {
         <p>${fills(p.why)}</p>
         <p class="small muted" style="margin-top:12px"><b>Risk:</b> ${fills(p.risk)}</p>
         ${(p.reuse || []).length ? `<p class="small warn-text" style="margin-top:8px"><b>Check:</b> this script reuses its reference's own content (${esc(p.reuse.join(", "))}); swap it for the creator's own.</p>` : ""}
+        ${(p.copied_value || []).length ? `<p class="small warn-text" style="margin-top:8px"><b>Check:</b> this script repeats its reference's own advice: ${esc(p.copied_value.join("; "))}. Replace it with your own.</p>` : ""}
         ${(p.needs_from_you || []).length ? `<p class="small" style="margin-top:12px"><b>You need to fill in:</b></p><ul class="why-odds">${p.needs_from_you.map((n) => `<li>${fills(n)}</li>`).join("")}</ul>` : ""}
       </section>
     </div></details>`;
