@@ -7,7 +7,7 @@ import json
 import re
 from datetime import date
 
-from . import db, madlibs, textstyle
+from . import db, doubledown, madlibs, textstyle
 from .ai import SEALCAM_KEYS
 from .planner import reference_scenes
 
@@ -95,9 +95,12 @@ def _card_markdown(src, card):
         audio = _label(f.get("audio")) or None
     caption = (card.get("caption") or "").split("\n")[0][:200]
     lines = [("Stats", " · ".join(x for x in stats if x)),
-             ("Why it's a reference", "a doubled-down template: the account keeps posting it and it keeps working"
-              if src.get("basis") == "template" else f"it passed the outlier test ({src['ratio']}× the creator's followers"
-              + (", from views estimated from likes)" if src.get("measure") == "likes" else ")")),
+             ("Why it's a reference", "; and ".join(x for x in (
+                 _copied(src.get("replicated")),
+                 "a doubled-down template: the account keeps posting it and it keeps working" if src.get("basis") == "template"
+                 else None if src.get("basis") == "replicated"
+                 else f"it passed the outlier test ({src['ratio']}× the creator's followers"
+                 + (", from views estimated from likes)" if src.get("measure") == "likes" else ")")) if x)),
              ("Hook", " · ".join(x for x in hook if x)),
              ("Type", " · ".join(f"{_label(k).capitalize()}: {v}" for k, v in kinds if v)),
              ("Structure", " · ".join(str(x) for x in pace if x)),
@@ -107,6 +110,16 @@ def _card_markdown(src, card):
              ("Audio", audio),
              ("Caption", f"“{caption}”" if caption else None)]
     return [f"- **{k}:** {v}" for k, v in lines if v]
+
+
+def _copied(rep):
+    """One line on a format several creators copy, or None."""
+    if not rep:
+        return None
+    what = f"the phrase “{rep['signature']}”" if rep["how"] == "phrase" else f"the hook “{rep['signature']}”"
+    return (f"a format {rep['creators']} creators copy ({what}); {rep['winners']} of them get "
+            f"{rep['median_lift']}× their own typical post or more with it" if rep.get("median_lift") else
+            f"a format {rep['creators']} creators copy ({what}), and {rep['winners']} of them beat their follower count with it")
 
 
 def _madlib_markdown(m, h):
@@ -168,7 +181,8 @@ def post_markdown(post, rates, sources, refs=None, level=1, cards=None):
     factors = odds.get("factors") or {}
     if odds.get("multiplier") is not None:  # the same reasoning the app shows under the odds
         out.append(f"  - {odds['multiplier']}× the niche base rate: evidence ×{factors.get('evidence')} · funnel stage ×{factors.get('funnel')}"
-                   + (f" · its sources median {factors['source_median_ratio']}×" if factors.get("source_median_ratio") else ""))
+                   + (f" · its sources median {factors['source_median_ratio']}×" if factors.get("source_median_ratio") else "")
+                   + (f" · a format {factors['replicated_by']} creators copy" if factors.get("replicated_by") else ""))
         out += [f"  - {_label(s['attr']).capitalize()} “{_label(s['value'])}”: used by {s['count']} of {s['of']} outliers"
                 for s in odds.get("support") or []]
     out.append(f"- **Why it should work:** {t(post.get('why'))}")
@@ -176,7 +190,8 @@ def post_markdown(post, rates, sources, refs=None, level=1, cards=None):
     if borrowed:
         out.append("- **Borrows its structure from:**")
         out += [f"  - {s['handle']}'s {KIND_LABEL.get(s.get('kind') or 'reel')}, {s['ratio']}× their followers"
-                + (" (estimated from likes)" if s.get("measure") == "likes" else "") + f": {s['url']}" for s in borrowed]
+                + (" (estimated from likes)" if s.get("measure") == "likes" else "")
+                + (f", {_copied(s['replicated'])}" if s.get("replicated") else "") + f": {s['url']}" for s in borrowed]
     out += [f"- **Risk:** {t(post.get('risk'))}"]
     if post.get("reuse"):
         out.append(f"- **Check:** this script reuses its reference's own content ({', '.join(post['reuse'])}); swap it for the creator's own.")
@@ -293,6 +308,9 @@ def plan_exports(project_id, data):
     sources, refs, cards = _sources(ids), reference_scenes(ids), _cards(ids)
     with db.connect() as conn:
         project = conn.execute("SELECT name, niche FROM projects WHERE id=?", (project_id,)).fetchone()
+        replicated = doubledown.replicated_by_post(conn, project_id)
+    for sc, s in sources.items():
+        s["replicated"] = replicated.get(sc)
     first = posts[0]["date"] if posts else date.today().isoformat()
     week = [f"# Week of {_day(first)}", "",
             f"{len(posts)} posts for {project['niche'] or project['name'] if project else 'this niche'}, adapted from "

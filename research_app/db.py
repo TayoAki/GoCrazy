@@ -66,7 +66,8 @@ CREATE TABLE IF NOT EXISTS outliers (
     ratio REAL NOT NULL,
     keyword TEXT,
     status TEXT NOT NULL DEFAULT 'new',   -- new | saved | dismissed
-    basis TEXT NOT NULL DEFAULT 'followers',  -- followers (passed the 5x test) | template (a doubled-down account's template)
+    basis TEXT NOT NULL DEFAULT 'followers',  -- followers (passed the 5x test) | template (one account's doubled-down
+                                              -- template) | replicated (a format several creators copy)
     measure TEXT NOT NULL DEFAULT 'views',    -- views | likes (Instagram hides carousel views, so the ratio is estimated from likes)
     created_at TEXT NOT NULL,
     PRIMARY KEY (project_id, shortcode)

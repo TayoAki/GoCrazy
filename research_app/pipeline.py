@@ -160,7 +160,8 @@ def _run(run_id, project_id, stop):
     _update(run_id, phase="covers", progress=0.95, message="Downloading covers", credits_used=client.credits_used)
     media.download_missing_covers(project_id)
     with db.connect() as conn:
-        media.download_covers({sc for a in doubledown.project_accounts(conn, project_id) for t in a["templates"] for sc in t["examples"]})
+        media.download_covers({sc for a in doubledown.project_accounts(conn, project_id) for t in a["templates"] for sc in t["examples"]}
+                              | {e["shortcode"] for t in doubledown.niche_templates(conn, project_id) for e in t["examples"]})
 
     with db.connect() as conn:
         stats["outliers_total"] = conn.execute("SELECT COUNT(*) FROM outliers WHERE project_id=?", (project_id,)).fetchone()[0]

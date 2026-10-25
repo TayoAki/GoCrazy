@@ -123,7 +123,7 @@ const ICON = {
 
 // ---------- state ----------
 const S = {
-  view: "research", tab: "outliers", projects: [], projectId: null, outliers: [], creators: [], doubled: [], patterns: null, rates: null,
+  view: "research", tab: "outliers", projects: [], projectId: null, outliers: [], creators: [], doubled: [], replicated: [], patterns: null, rates: null,
   runs: [], plans: [], planId: null, planForm: false, open: null, td: null, editing: null, edits: {}, mlEdits: {},
   status: {}, vocab: null, sort: "ratio", filter: "active", kind: "all", events: [], seenEvents: 0,
 };
@@ -139,16 +139,16 @@ async function loadProjects() {
 }
 
 async function loadProjectData() {
-  if (!S.projectId) Object.assign(S, { outliers: [], creators: [], doubled: [], patterns: null, runs: [], plans: [], rates: null });
+  if (!S.projectId) Object.assign(S, { outliers: [], creators: [], doubled: [], replicated: [], patterns: null, runs: [], plans: [], rates: null });
   if (!S.projectId) return;
   const id = S.projectId;
-  const [outliers, creators, patterns, runs, plans, rates, doubled] = await Promise.all([
+  const [outliers, creators, patterns, runs, plans, rates, doubled, replicated] = await Promise.all([
     api(`/api/projects/${id}/outliers?status=${S.filter}&sort=${S.sort}`), api(`/api/projects/${id}/creators`),
     api(`/api/projects/${id}/patterns`), api(`/api/projects/${id}/runs`), api(`/api/projects/${id}/plans`),
-    api(`/api/projects/${id}/rates`), api(`/api/projects/${id}/doubled-down`),
+    api(`/api/projects/${id}/rates`), api(`/api/projects/${id}/doubled-down`), api(`/api/projects/${id}/replicated`),
   ]);
   if (id !== S.projectId) return;
-  Object.assign(S, { outliers, creators, patterns, runs, plans, rates, doubled });
+  Object.assign(S, { outliers, creators, patterns, runs, plans, rates, doubled, replicated });
 }
 
 async function loadStatus(refresh = false) {
@@ -354,7 +354,7 @@ function renderMain() {
     return;
   }
   const done = S.outliers.filter((o) => o.teardown_status === "done").length;
-  const tabs = [["outliers", "Outliers", p.outliers - p.dismissed], ["doubled", "Doubled down", S.doubled.length], ["creators", "Creators", S.creators.length],
+  const tabs = [["outliers", "Outliers", p.outliers - p.dismissed], ["doubled", "Doubled down", S.replicated.length + S.doubled.length], ["creators", "Creators", S.creators.length],
     ["teardowns", "Teardowns", done], ["plan", "Plan", S.plans.filter((x) => x.status === "done").length]];
   const body = S.open ? teardownPage() : { doubled: doubledTab, creators: creatorsTab, teardowns: teardownsTab, plan: planTab }[S.tab]?.() ?? outliersTab(p);
   main.innerHTML = `<div class="tabs" role="tablist">${tabs.map(([k, l, n]) =>
@@ -372,7 +372,7 @@ function outliersTab(p) {
     return `<button class="card" data-open="${esc(o.shortcode)}" aria-label="Open teardown of ${who(o)}, ${o.ratio} times">
       <div class="thumb">${o.cover ? `<img src="${esc(o.cover)}" alt="" loading="lazy">` : `<div class="ph">${ICON.image}</div>`}
         <span class="ratio">${ratioText(o)}</span>
-        <span class="corner">${kindChip(o)}${o.basis === "template" ? `<span class="chip info">Template</span>` : ""}${o.status === "saved" ? `<span class="chip accent">${ICON.star}Saved</span>` : ""}${o.sponsored ? `<span class="chip warn">Sponsored</span>` : ""}</span>
+        <span class="corner">${kindChip(o)}${o.basis === "template" ? `<span class="chip info">Template</span>` : o.basis === "replicated" ? `<span class="chip info">Copied format</span>` : ""}${o.status === "saved" ? `<span class="chip accent">${ICON.star}Saved</span>` : ""}${o.sponsored ? `<span class="chip warn">Sponsored</span>` : ""}</span>
       </div>
       <div class="body">
         <div class="who">${who(o)}</div>
@@ -409,11 +409,31 @@ function outliersTab(p) {
 }
 
 function doubledTab() {
-  const head = `<div class="page-head"><h1>Doubled down</h1><p>Creators who found a template that works and keep posting it.
-    A template is a phrase that keeps coming back in their caption headlines. It counts when it shows up in 4 or more reels,
-    its typical reel reaches at least 10% of their followers, and it's either a habit (1 in 5 of their reels) or beats their
-    follower count. Copying a template that keeps working is often safer than copying one lucky reel.</p></div>`;
-  if (!S.doubled.length) return head + `<p class="muted">None found yet. Run research: every scanned creator, including accounts you name to study and bigger accounts up to ${fmt(project()?.settings?.double_down_max_followers)} followers, is checked for a repeated template.</p>`;
+  const head = `<div class="page-head"><h1>Doubled down</h1><p>Templates that keep working: first the formats several creators copy,
+    then the templates one creator keeps reposting. Copying either is safer than copying one lucky post.</p></div>`;
+  const copied = (t) => S.replicated.find((r) => r.signature === t.phrase && r.kind === (t.kind || "reel"));
+  const repExample = (e) => `<div class="ex">
+      ${e.cover ? `<img src="${esc(e.cover)}" alt="" loading="lazy">` : `<div class="ph">${ICON.image}</div>`}
+      <div class="n">${who(e)} · ${e.estimated ? "≈" : ""}${e.ratio < 0.1 ? "<0.1" : e.ratio}× followers</div>
+      <div class="t" title="${esc(e.title || "")}">${e.lift ? `${e.lift}× their typical post` : "too few posts to compare"}${e.posts > 1 ? ` · ${e.posts} posts` : ""} · ${esc(e.title || "No caption")}</div>
+      ${e.outlier_status ? `<button class="btn sm" data-open="${esc(e.shortcode)}">${ICON.cut} ${e.teardown_status === "done" ? "Teardown" : "Open"}</button>`
+        : STATIC ? `<a class="btn sm quiet" href="${esc(e.url)}" target="_blank" rel="noopener">${ICON.ext} Open post</a>`
+        : `<button class="btn sm" data-action="add-template" data-basis="replicated" data-shortcode="${esc(e.shortcode)}">${ICON.cut} Tear down</button>`}
+    </div>`;
+  const replicatedSec = `<h2 class="section-gap" style="margin-bottom:8px">Copied across creators</h2>
+    <p class="small muted" style="margin:0 0 16px">A format counts when 3 or more creators use the same phrase (from their caption headlines, or the cover
+      text of torn-down posts) or hook frame, most of them get 2× or more their own typical post with it, and it isn't just one of
+      this project's keywords. It works for different audiences, not one account's: the strongest evidence there is.</p>
+    ${S.replicated.length ? `<div class="dd-list">${S.replicated.map((t) => `<section class="dd">
+      <div class="dd-h"><b>“${esc(cap(t.signature))}”</b>${t.kind !== "reel" ? ` <span class="chip kind">${KIND[t.kind]}</span>` : ""}
+        <span class="chip good">${t.winners} of ${t.creators} creators win with it</span>
+        <span class="small muted">${t.posts} ${KINDS_PLURAL[t.kind]} · typical one ${t.median_lift ? t.median_lift + "× the creator's own typical post" : "beats the follower count"} · ${t.how === "frame" ? "same hook frame" : "same phrase"}</span></div>
+      <div class="tpl-ex">${t.examples.map(repExample).join("")}</div></section>`).join("")}</div>`
+      : `<p class="muted">No format is copied by 3 or more creators with results yet. Scanning more creators (Max creators in Settings) gives it more to compare.</p>`}`;
+  const accountsHead = `<h2 class="section-gap" style="margin-bottom:8px">One creator, one template</h2>
+    <p class="small muted" style="margin:0 0 16px">A template is a phrase that keeps coming back in a creator's caption headlines. It counts when it shows up in 4 or more
+      of their posts, its typical post reaches at least 10% of their followers, and it's either a habit (1 in 5 of their posts) or beats their follower count.</p>`;
+  if (!S.doubled.length) return head + replicatedSec + accountsHead + `<p class="muted">None found yet. Run research: every scanned creator, including accounts you name to study and bigger accounts up to ${fmt(project()?.settings?.double_down_max_followers)} followers, is checked for a repeated template.</p>`;
   const example = (e) => `<div class="ex">
       ${e.cover ? `<img src="${esc(e.cover)}" alt="" loading="lazy">` : `<div class="ph">${ICON.image}</div>`}
       <div class="n">${e.estimated ? "≈" : ""}${fmt(e.views)} views · ${e.estimated ? "≈" : ""}${e.ratio}× followers</div>
@@ -422,12 +442,12 @@ function doubledTab() {
         : STATIC ? `<a class="btn sm quiet" href="${esc(e.url)}" target="_blank" rel="noopener">${ICON.ext} Open post</a>`
         : `<button class="btn sm" data-action="add-template" data-shortcode="${esc(e.shortcode)}">${ICON.cut} Tear down</button>`}
     </div>`;
-  return head + `<div class="dd-list">${S.doubled.map((a) => `<section class="dd">
+  return head + replicatedSec + accountsHead + `<div class="dd-list">${S.doubled.map((a) => `<section class="dd">
       <div class="dd-h"><a href="${profileUrl(a.username)}" target="_blank" rel="noopener">${who(a)}</a>${a.username.startsWith("tt:") ? ` <span class="chip kind">TikTok</span>` : ""}
         <span class="small muted">${fmt(a.followers)} followers · ${a.reels} posts scanned · typical post ${fmt(a.median_views)} views</span>
         ${a.study ? `<span class="chip accent">Account you named</span>` : ""}</div>
       ${a.templates.map((t) => `<div class="tpl ${t.qualifies ? "" : "minor"}">
-        <div class="tpl-h"><b>“${esc(cap(t.phrase))}”</b><span class="chip ${t.qualifies ? "good" : ""}">${t.qualifies ? "Doubled down" : "Also repeats"}</span>${t.kind && t.kind !== "reel" ? `<span class="chip kind">${KIND[t.kind]}</span>` : ""}</div>
+        <div class="tpl-h"><b>“${esc(cap(t.phrase))}”</b><span class="chip ${t.qualifies ? "good" : ""}">${t.qualifies ? "Doubled down" : "Also repeats"}</span>${t.kind && t.kind !== "reel" ? `<span class="chip kind">${KIND[t.kind]}</span>` : ""}${copied(t) ? `<span class="chip accent">Copied by ${copied(t).creators} creators</span>` : ""}</div>
         <div class="small muted">${t.count} of ${t.of} ${KINDS_PLURAL[t.kind || "reel"]} (${pct(t.share, 0)}) · typical one ${t.kind === "carousel" ? "≈" : ""}${fmt(t.median_views)} views, ${t.reach}× followers${t.vs_other_reels ? ` · ${t.vs_other_reels}× their other ${KINDS_PLURAL[t.kind || "reel"]}` : ""}</div>
         <div class="tpl-ex">${t.examples.map(example).join("")}</div></div>`).join("")}
     </section>`).join("")}</div>`;
@@ -777,7 +797,7 @@ function planDay(p, i, rates, planId) {
       ${sources.length ? `<div class="refs"><span class="small muted">Reference ${slides ? "posts" : "videos"}</span><div class="sources">${sources.map((x) => `<button class="source" data-open="${esc(x.shortcode)}">${x.cover ? `<img src="${esc(x.cover)}" alt="">` : `<span class="noimg"></span>`}${who(x)} · ${ratioText(x)}</button>`).join("")}</div></div>` : ""}
       <div class="ladder">${rung("p1", "beats your follower count", rates.p1)}${rung("p2", "2× your followers", rates.p2)}${rung("p5", "5× (an outlier)", rates.p5)}${rung("p10", "10×", rates.p10)}</div>
       <ul class="why-odds">
-        <li>${o.multiplier}× the niche base rate: evidence ×${o.factors.evidence} · funnel stage ×${o.factors.funnel}${o.factors.source_median_ratio ? ` · its sources median ${o.factors.source_median_ratio}×` : ""}.</li>
+        <li>${o.multiplier}× the niche base rate: evidence ×${o.factors.evidence} · funnel stage ×${o.factors.funnel}${o.factors.source_median_ratio ? ` · its sources median ${o.factors.source_median_ratio}×` : ""}${o.factors.replicated_by ? ` · a format ${o.factors.replicated_by} creators copy` : ""}.</li>
         ${o.support.map((s) => `<li>${esc(cap(label(s.attr)))} “${esc(label(s.value))}”: used by ${s.count} of ${s.of} outliers.</li>`).join("")}
         <li>${cap(o.confidence)} confidence: ${rates.reels} ${KINDS_PLURAL[o.kind || "reel"]} scanned${rates.estimated ? " (views estimated from likes)" : ""}, ${o.support[0]?.of ?? 0} teardowns. Treat it as a guide, not a forecast.</li>
       </ul>
@@ -1018,7 +1038,7 @@ document.addEventListener("click", async (ev) => {
     teardown: () => startTeardown(S.open), ai: () => startTeardown(S.open, "ai"), scenes: () => startTeardown(S.open, "scenes"), madlib: () => startTeardown(S.open, "madlib"),
     "add-template": async () => {
       const sc = el.dataset.shortcode;
-      await api(`/api/projects/${S.projectId}/outliers`, { method: "POST", body: { shortcode: sc } });
+      await api(`/api/projects/${S.projectId}/outliers`, { method: "POST", body: { shortcode: sc, basis: el.dataset.basis || "template" } });
       await loadProjectData();
       await openTeardown(sc);
       await startTeardown(sc);

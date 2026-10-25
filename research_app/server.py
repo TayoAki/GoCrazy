@@ -340,13 +340,31 @@ def doubled_down(project_id: int):
     return accounts
 
 
+@app.get("/api/projects/{project_id}/replicated")
+def replicated(project_id: int):
+    """Formats several creators copy and win with, each with one example post per creator."""
+    with db.connect() as conn:
+        get_project(conn, project_id)
+        found = doubledown.niche_templates(conn, project_id)
+        for t in found:
+            for e in t["examples"]:
+                r = conn.execute("""SELECT r.url, r.taken_at, o.status AS outlier_status, td.status AS teardown_status FROM reels r
+                                    LEFT JOIN outliers o ON o.shortcode = r.shortcode AND o.project_id = ?
+                                    LEFT JOIN teardowns td ON td.shortcode = r.shortcode WHERE r.shortcode = ?""",
+                                 (project_id, e["shortcode"])).fetchone()
+                e.update(dict(r), handle=db.handle(e["username"]), cover=cover_url(e["shortcode"]))
+            t.pop("shortcodes")
+    return found
+
+
 class TemplateIn(BaseModel):
     shortcode: str
+    basis: str = "template"   # template (one account's doubled-down template) | replicated (a format several creators copy)
 
 
 @app.post("/api/projects/{project_id}/outliers")
 def add_template_reel(project_id: int, body: TemplateIn):
-    """Add a doubled-down template's example reel to the project's outliers so it can be torn down and planned from."""
+    """Add a doubled-down template's example (or a replicated format's) to the project's outliers, to tear down and plan from."""
     with db.connect() as conn:
         get_project(conn, project_id)
         reel = conn.execute("""SELECT r.shortcode, r.kind, r.views, r.likes, r.caption, c.username, c.followers FROM reels r
@@ -354,10 +372,12 @@ def add_template_reel(project_id: int, body: TemplateIn):
         views = reach.views(reel, reach.likes_per_view(conn, project_id)) if reel else None
         if not views or not reel["followers"]:
             raise HTTPException(404, "Unknown reel")
+        basis = "replicated" if body.basis == "replicated" else "template"
+        keyword = "format copied across creators" if basis == "replicated" else f"{db.who(reel['username'])} template"
         conn.execute("""INSERT INTO outliers (project_id, shortcode, ratio, keyword, basis, measure, created_at)
-                        VALUES (?,?,?,?, 'template', ?, ?)
+                        VALUES (?,?,?,?,?,?,?)
                         ON CONFLICT(project_id, shortcode) DO UPDATE SET status = CASE WHEN status = 'dismissed' THEN 'new' ELSE status END""",
-                     (project_id, body.shortcode, round(views / reel["followers"], 1), f"{db.who(reel['username'])} template",
+                     (project_id, body.shortcode, round(views / reel["followers"], 1), keyword, basis,
                       "likes" if reel["kind"] == "carousel" else "views", db.now()))
     media.download_covers({body.shortcode})
     return {"ok": True}

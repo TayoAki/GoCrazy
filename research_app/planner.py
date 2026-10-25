@@ -12,7 +12,7 @@ from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, timedelta
 
-from . import db, llm, madlibs as madlib_lines, reach, teardown, textstyle
+from . import db, doubledown, llm, madlibs as madlib_lines, reach, teardown, textstyle
 from .ai import SEALCAM, SEALCAM_KEYS
 from .annotate import BEATS, VOCAB
 
@@ -56,7 +56,9 @@ delivery, format, beats, CTA.
 4. One post per slot, same order, matching the slot's funnel stage, content type and CTA type.
 5. Base each post on 1-3 teardowns (by id) whose hook, structure or format it reuses. Teardowns with
    doubled_down_template=true come from accounts that post that template again and again and keep winning: prefer
-   them, and when you reuse one, give the post a series_marker so the creator can repeat it too.
+   them, and when you reuse one, give the post a series_marker so the creator can repeat it too. Teardowns with a
+   replicated_format belong to a format several different creators copy and win with: the strongest evidence of all,
+   so prefer them most, keeping that format's shared phrase or frame in the hook.
 6. Keep each post's format: use exactly the format of the teardown it borrows from (if its sources differ, pick one of
    theirs). Variety across the week comes from topics, not from changing a proven format; a doubled-down template can
    fill several days.
@@ -239,6 +241,7 @@ def base_rates(project_id, kind="reel"):
 
 def teardown_summaries(project_id, kinds=None):
     with db.connect() as conn:
+        replicated = doubledown.replicated_by_post(conn, project_id)
         rows = conn.execute("""SELECT o.shortcode, o.ratio, o.basis, o.measure, r.username, t.data FROM outliers o
                                JOIN reels r ON r.shortcode = o.shortcode JOIN teardowns t ON t.shortcode = o.shortcode
                                WHERE o.project_id = ? AND o.status <> 'dismissed' AND t.status = 'done'
@@ -256,6 +259,9 @@ def teardown_summaries(project_id, kinds=None):
             "id": r["shortcode"], "creator": db.who(r["username"]), "ratio": r["ratio"], "post_kind": kind,
             "ratio_estimated_from_likes": r["measure"] == "likes",
             "doubled_down_template": r["basis"] == "template",
+            "replicated_format": ({"phrase" if rep["how"] == "phrase" else "hook_frame": rep["signature"], "creators": rep["creators"],
+                                   "creators_winning": rep["winners"], "typical_lift": rep["median_lift"]}
+                                  if (rep := replicated.get(r["shortcode"])) else None),
             "verbal_hook": f.get("verbal_hook"), "written_hook": f.get("written_hook"), "visual_hook": f.get("visual_hook"),
             "hook_pattern": f.get("hook_pattern"), "angle": f.get("angle"), "video_type": f.get("video_type"),
             "delivery": f.get("delivery"), "story_type": f.get("story_type"), "format": f.get("format"),
@@ -282,7 +288,10 @@ def odds(post, slot, teardowns, rates):
     share = statistics.mean(s["count"] / n for s in support) if support and n else 0
     sources = [t["ratio"] for t in teardowns if t["id"] in (post.get("source_outliers") or [])]
     source_bonus = 0.25 if sources and statistics.median(sources) >= 10 else 0
-    evidence = 1 + 2 * share + source_bonus
+    copied = [t["replicated_format"]["creators"] for t in teardowns
+              if t["id"] in (post.get("source_outliers") or []) and t.get("replicated_format")]
+    replicated_bonus = 0.25 if copied else 0  # the format works for several creators, not one account's audience
+    evidence = 1 + 2 * share + source_bonus + replicated_bonus
     funnel = FUNNEL_FACTOR[slot["funnel"]] * (AUTHORITY_FACTOR if slot["content_type"] == "authority" else 1)
     multiplier = round(max(0.5, min(3.0, evidence * funnel)), 2)
     p = {k: (min(0.6, rates[k] * multiplier) if rates.get(k) is not None else None) for k in ("p1", "p2", "p5", "p10")}
@@ -291,7 +300,8 @@ def odds(post, slot, teardowns, rates):
     confidence = "medium" if n >= 15 and rates["reels"] >= 500 else "low"
     return {**p, "multiplier": multiplier, "band": band, "confidence": confidence, "support": support,
             "factors": {"evidence": round(evidence, 2), "funnel": round(funnel, 2), "source_median_ratio":
-                        round(statistics.median(sources), 1) if sources else None}}
+                        round(statistics.median(sources), 1) if sources else None,
+                        "replicated_by": max(copied) if copied else None}}
 
 
 def start(project_id, about, followers, start_date, posts, model, kinds=None):
@@ -756,5 +766,6 @@ def _generate(project_id, about, followers, start_date, posts, model, teardowns)
                        "that beat each multiple of the creator's followers; a carousel's views are estimated from its "
                        "likes, since Instagram hides them) × an evidence multiplier (1 + 2 × the average share of torn-down outliers that use "
                        "the same hook pattern, format, angle, video type, structure and delivery; +0.25 when its source "
-                       "outliers median 10×+) × a funnel factor (TOFU 1.15, MOFU 0.9, BOFU 0.8; authority ×0.75). "
+                       "outliers median 10×+; +0.25 when a source belongs to a format several creators copy and win with) "
+                       "× a funnel factor (TOFU 1.15, MOFU 0.9, BOFU 0.8; authority ×0.75). "
                        "Capped at 3×. An estimate from a small sample, not a forecast.")}

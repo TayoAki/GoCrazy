@@ -138,6 +138,22 @@ reel reaches at least 10% of their followers, and that is either a habit (20% or
 (its typical reel beats the follower count). The **Doubled down** tab lists them with their template's reels; any of
 those reels can be added as an outlier for a teardown.
 
+**Copied across creators.** A format that several creators copy is stronger evidence than one account's habit: it works
+for different audiences. The tab's first section lists them. A format is a phrase (from caption headlines, plus the
+cover or hook text of torn-down posts) or a hook frame (a torn-down hook's madlib with its blanks removed, e.g. "how to
+be a ___") that:
+
+- 3 or more creators use, in the same post kind (reel, carousel or slideshow);
+- most of them win with: at least 2, and at least half, get 2× or more their own typical post of that kind with it (for
+  a creator with fewer than 5 posts of that kind, beating the follower count counts as a win);
+- has a typical lift of 2× or more across those creators;
+- isn't the niche itself: phrases inside a project keyword, or holding a one-word keyword ("learning mahjong"), are skipped.
+
+A format whose posts are mostly another's (e.g. "body workout" inside "full body") is merged into it. Each format shows
+one example per creator, and any of them can be added as an outlier ("Copied format") to tear down. Plans prefer
+teardowns of a copied format above everything else, briefs say which format a reference belongs to, and the odds add
++0.25 to the evidence when a source belongs to one.
+
 ## Week plan and odds of virality
 
 **Plan** tab: describe the client (who they are, what they sell, real stories and results), give their follower count
