@@ -2,6 +2,7 @@
 
 import threading
 import time
+from datetime import datetime, timezone
 
 import requests
 
@@ -78,6 +79,24 @@ class ScrapeCreators:
         # trim=true puts the media at the top level; the untrimmed shape nests it under data.
         return body.get("xdt_shortcode_media") or (body.get("data") or {}).get("xdt_shortcode_media") or {}
 
+    def user_posts(self, handle, max_id=None):
+        """Every kind of post (reels, carousels, photos), 12 a page. The only place Instagram carousels show up."""
+        body = self.get("/v2/instagram/user/posts", handle=handle, next_max_id=max_id)
+        return body.get("items") or [], body.get("next_max_id") if body.get("more_available") is not False else None
+
+    def tiktok_top(self, query, cursor=None, publish_time=None):
+        """TikTok's "Top" search: the only search that returns photo slideshows (keyword search returns videos only)."""
+        body = self.get("/v1/tiktok/search/top", query=query, cursor=cursor, publish_time=publish_time)
+        return body.get("items") or [], body.get("cursor")
+
+    def tiktok_videos(self, handle, cursor=None):
+        body = self.get("/v3/tiktok/profile/videos", handle=handle, max_cursor=cursor)
+        return body.get("aweme_list") or [], body.get("max_cursor") if body.get("has_more") else None
+
+    def tiktok_post(self, url):
+        body = self.get("/v2/tiktok/video", url=url)
+        return body.get("aweme_detail") or body.get("data") or {}
+
     def transcript(self, url, allow_long=False):
         body = self.get("/v2/instagram/media/transcript", url=url, cache_max_age="30d",
                         allow_long_transcription="true" if allow_long else None)
@@ -103,4 +122,69 @@ def reel_from_user_item(item):
         "caption": caption or "",
         "thumb_url": thumb,
         "duration": item.get("video_duration"),
+    }
+
+
+def _caption_text(caption):
+    return (caption.get("text") if isinstance(caption, dict) else caption) or ""
+
+
+def carousel_from_post_item(item):
+    """Normalize one carousel (media_type 8) from /v2/instagram/user/posts. Instagram shows no views for carousels."""
+    slides = []
+    for s in item.get("carousel_media") or []:
+        candidates = (s.get("image_versions2") or {}).get("candidates") or []
+        best = max(candidates, key=lambda c: (c.get("width") or 0) * (c.get("height") or 0), default=None)
+        url = (best or {}).get("url") or s.get("display_uri")
+        if url:
+            slides.append({"url": url, "video": s.get("media_type") == 2})
+    music = item.get("music_metadata") or {}
+    song = (music.get("music_info") or {}).get("music_asset_info") or {}
+    return {
+        "shortcode": item.get("code"), "url": item.get("url") or f"https://www.instagram.com/p/{item.get('code')}/",
+        "views": None, "likes": item.get("like_count"), "comments": item.get("comment_count"), "taken_at": item.get("created_at"),
+        "caption": _caption_text(item.get("caption")), "thumb_url": slides[0]["url"] if slides else item.get("display_uri"),
+        "duration": None, "platform": "instagram", "kind": "carousel", "saves": None, "shares": None, "slides": slides,
+        "music": {"title": song.get("title"), "artist": song.get("display_artist")} if song.get("title") else None,
+    }
+
+
+def reel_from_post_item(item):
+    """A reel from the posts feed (media_type 2 with a play count), so the carousel scan doesn't waste the reels it sees."""
+    return {**reel_from_user_item(item), "url": f"https://www.instagram.com/reel/{item.get('code')}/"}
+
+
+def _tiktok_images(item):
+    """Slide links from either shape: search results carry a plain list, profile feeds carry image_post_info."""
+    if item.get("images"):
+        return [{"url": u, "video": False} for u in item["images"] if isinstance(u, str)]
+    out = []
+    for img in (item.get("image_post_info") or {}).get("images") or []:
+        urls = (img.get("display_image") or {}).get("url_list") or []
+        if urls:
+            out.append({"url": urls[0], "video": False})
+    return out
+
+
+def is_slideshow(item):
+    return item.get("content_type") == "multi_photo" or bool((item.get("image_post_info") or {}).get("images"))
+
+
+def slideshow_from_tiktok_item(item):
+    """Normalize a TikTok photo slideshow from Top search or a profile feed. Its username is stored as "tt:<handle>"."""
+    st = item.get("statistics") or {}
+    author = item.get("author") or {}
+    aweme_id = str(item.get("aweme_id") or item.get("id"))
+    created = item.get("create_time_utc") or item.get("create_time")
+    if isinstance(created, (int, float)):
+        created = datetime.fromtimestamp(created, timezone.utc).isoformat(timespec="seconds")
+    slides = _tiktok_images(item)
+    music = item.get("music") or {}
+    return {
+        "shortcode": aweme_id, "url": f"https://www.tiktok.com/@{author.get('unique_id')}/photo/{aweme_id}",
+        "views": st.get("play_count"), "likes": st.get("digg_count"), "comments": st.get("comment_count"),
+        "taken_at": created, "caption": item.get("desc") or "", "thumb_url": slides[0]["url"] if slides else None,
+        "duration": None, "platform": "tiktok", "kind": "slideshow", "saves": st.get("collect_count"),
+        "shares": st.get("share_count"), "slides": slides,
+        "music": {"title": music.get("title"), "artist": music.get("author")} if music.get("title") else None,
     }

@@ -177,6 +177,7 @@ details.more[open] > summary { margin-bottom: var(--s3); }
 .chip.bad { background: var(--bad-soft); color: var(--bad); }
 .chip.info { background: var(--info-soft); color: var(--info); }
 .chip.ai { background: var(--ai-soft); color: var(--ai); }
+.chip.kind { background: var(--text); color: var(--panel); }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
 
 /* ---------- outlier grid ---------- */
@@ -455,3 +456,9 @@ mark.fill { background: var(--warn-soft); color: var(--warn); border-radius: 4px
   .oddsbox { grid-column: 2; align-items: flex-start; text-align: left; }
   .ladder, .grid-3 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+
+/* Carousels and slideshows: every slide in a row, big enough to read its text. */
+.filmstrip.slides { display: flex; overflow-x: auto; padding-bottom: var(--s2); }
+.filmstrip.slides figure { flex: 0 0 auto; width: 200px; }
+.filmstrip.slides img { width: 200px; height: auto; aspect-ratio: auto; object-fit: contain; }
+fieldset.field { border: 0; padding: 0; margin: 0; display: grid; gap: 6px; }

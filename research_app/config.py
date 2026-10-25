@@ -18,9 +18,15 @@ DEFAULT_SETTINGS = {
     "search_pages": 2,         # reel-search pages per keyword (~12 s and 1 credit each)
     "account_search": True,    # also run Instagram account search per keyword (1 credit, includes follower counts)
     "reel_pages": 2,           # pages of a creator's reels to scan (12 reels, 1 credit each)
-    "max_creators": 30,
-    "study_accounts": [],
-    "double_down_max_followers": 5000000,  # bigger creators are still scanned, only to spot doubled-down templates      # handles always scanned (deeper, whatever their size), e.g. an account you want to copy
+    "max_creators": 30,        # per platform
+    "study_accounts": [],      # handles always scanned (deeper, whatever their size), e.g. an account you want to copy
+    "double_down_max_followers": 5000000,  # bigger creators are still scanned, only to spot doubled-down templates
+    "reels": True,             # Instagram reels
+    "carousels": False,        # Instagram carousels: read from each creator's posts feed (Instagram has no carousel search)
+    "post_pages": 2,           # pages of a creator's posts feed to scan for carousels (12 posts, 1 credit each)
+    "slideshows": False,       # TikTok photo slideshows: TikTok's Top search per keyword, then each creator's feed
+    "tiktok_search_pages": 2,  # Top-search pages per keyword (about 30 results, 1 credit each)
+    "tiktok_pages": 2,         # pages of a TikTok creator's feed to scan (1 credit each)
     "credit_budget": 300,      # hard stop for one research run
     "allow_long_transcription": False,  # >120 s reels cost 10 credits per started minute
     "ai_annotation": True,     # run the OpenRouter vision pass at the end of every teardown

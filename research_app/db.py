@@ -52,7 +52,13 @@ CREATE TABLE IF NOT EXISTS reels (
     caption TEXT,
     thumb_url TEXT,
     duration REAL,
-    fetched_at TEXT
+    fetched_at TEXT,
+    platform TEXT NOT NULL DEFAULT 'instagram',  -- instagram | tiktok (TikTok usernames are stored as "tt:<handle>")
+    kind TEXT NOT NULL DEFAULT 'reel',           -- reel | carousel (Instagram) | slideshow (TikTok photo mode)
+    saves INTEGER,
+    shares INTEGER,
+    slides TEXT,                                 -- JSON list of slide image links, for carousels and slideshows
+    music TEXT                                   -- JSON {title, artist} when a slideshow or carousel has a sound
 );
 CREATE TABLE IF NOT EXISTS outliers (
     project_id INTEGER NOT NULL,
@@ -61,6 +67,7 @@ CREATE TABLE IF NOT EXISTS outliers (
     keyword TEXT,
     status TEXT NOT NULL DEFAULT 'new',   -- new | saved | dismissed
     basis TEXT NOT NULL DEFAULT 'followers',  -- followers (passed the 5x test) | template (a doubled-down account's template)
+    measure TEXT NOT NULL DEFAULT 'views',    -- views | likes (Instagram hides carousel views, so the ratio is estimated from likes)
     created_at TEXT NOT NULL,
     PRIMARY KEY (project_id, shortcode)
 );
@@ -110,8 +117,15 @@ def connect():
 def init():
     with connect() as conn:
         conn.executescript(SCHEMA)
-        if "basis" not in {c[1] for c in conn.execute("PRAGMA table_info(outliers)")}:  # databases made before templates
-            conn.execute("ALTER TABLE outliers ADD COLUMN basis TEXT NOT NULL DEFAULT 'followers'")
+        # Columns added after the first release, for databases made before them.
+        for table, column, kind in [("outliers", "basis", "TEXT NOT NULL DEFAULT 'followers'"),
+                                    ("outliers", "measure", "TEXT NOT NULL DEFAULT 'views'"),
+                                    ("reels", "platform", "TEXT NOT NULL DEFAULT 'instagram'"),
+                                    ("reels", "kind", "TEXT NOT NULL DEFAULT 'reel'"),
+                                    ("reels", "saves", "INTEGER"), ("reels", "shares", "INTEGER"),
+                                    ("reels", "slides", "TEXT"), ("reels", "music", "TEXT")]:
+            if column not in {c[1] for c in conn.execute(f"PRAGMA table_info({table})")}:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {kind}")
         # A run left "running" by a server restart can never finish.
         conn.execute("UPDATE runs SET status='stopped', message='Server restarted', finished_at=? WHERE status='running'", (now(),))
         conn.execute("UPDATE teardowns SET status='failed', error='Server restarted' WHERE status='running'")
@@ -126,3 +140,13 @@ def log(project_id, level, message):
 
 def project_settings(row):
     return {**DEFAULT_SETTINGS, **json.loads(row["settings"])}
+
+
+def handle(username):
+    """The handle people know: TikTok accounts are stored as "tt:<handle>" so they never mix with an Instagram namesake."""
+    return (username or "")[3:] if (username or "").startswith("tt:") else username
+
+
+def who(username):
+    """"@handle", with "(TikTok)" after a TikTok account."""
+    return "@" + handle(username) + (" (TikTok)" if (username or "").startswith("tt:") else "")

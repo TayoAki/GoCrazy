@@ -7,11 +7,16 @@ back and keeps reaching a real share of the audience. That's often the safer thi
 A template qualifies when one phrase repeats in at least MIN_REELS of the creator's scanned reels, its typical (median)
 reel reaches at least MIN_REACH of their followers, and it is either a habit (MIN_SHARE of their reels or more) or a
 proven winner (its typical reel beats the follower count).
+
+Reels, carousels and slideshows are counted separately (a creator's carousel template is its own template), and a
+carousel's views are estimated from its likes.
 """
 
 import re
 import statistics
 from collections import Counter
+
+from . import db, reach
 
 MIN_REELS, MIN_SHARE, MIN_REACH, WINNER_REACH = 4, 0.2, 0.1, 1.0
 
@@ -68,16 +73,22 @@ def templates(reels, followers, limit=3):
 
 def project_accounts(conn, project_id):
     """Every scanned creator in the project with at least one qualifying template, best reach first."""
+    project = conn.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone()
+    kinds = (reach.enabled_kinds(db.project_settings(project)) if project else None) or ["reel"]
+    lpv = reach.likes_per_view(conn, project_id)
     rows = conn.execute("""SELECT pc.username, c.followers, c.full_name FROM project_creators pc
                            JOIN creators c ON c.username = pc.username
                            WHERE pc.project_id = ? AND pc.status = 'scanned' AND c.followers > 0""", (project_id,)).fetchall()
     accounts = []
     for row in rows:
-        reels = [dict(r) for r in conn.execute("SELECT shortcode, views, caption FROM reels WHERE username=? AND views IS NOT NULL",
-                                                (row["username"],))]
-        found = templates(reels, row["followers"])
+        posts = [dict(r) for r in conn.execute(f"SELECT shortcode, kind, views, likes, caption FROM reels WHERE username=? "
+                                               f"AND kind IN ({','.join('?' * len(kinds))})", (row["username"], *kinds))]
+        for post in posts:
+            post["views"] = reach.views(post, lpv)
+        posts = [p for p in posts if p["views"]]
+        found = [{**t, "kind": kind} for kind in kinds for t in templates([p for p in posts if p["kind"] == kind], row["followers"])]
         if any(t["qualifies"] for t in found):  # the other repeated phrases come along, marked as not qualifying
             accounts.append({"username": row["username"], "full_name": row["full_name"], "followers": row["followers"],
-                             "reels": len(reels), "median_views": int(statistics.median(r["views"] for r in reels)),
-                             "templates": found})
+                             "reels": len(posts), "median_views": int(statistics.median(p["views"] for p in posts)),
+                             "templates": found, "lpv": lpv})
     return sorted(accounts, key=lambda a: -max(t["reach"] or 0 for t in a["templates"]))

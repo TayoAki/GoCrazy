@@ -12,6 +12,8 @@ BEATS = ["HOOK", "CONTEXT", "PROMISE", "NAME_METHOD", "STEP", "EXAMPLE", "PROOF"
 
 VOCAB = {
     "post_type": ["reel", "carousel", "photo"],
+    # The eight carousel types (playbook A10, video #10); TikTok photo slideshows use them too.
+    "carousel_type": ["tutorial", "do_dont", "tip_hack", "storytelling", "transformation", "problem_solution", "list", "types"],
     "hook_pattern": ["is_it_possible", "time_ago", "did_you_know_if", "levels_of", "smart_vs_dumb", "good_better_best",
                      "not_a_flex", "picture_of", "this_to_this", "stop_doing", "if_you_audience", "number_list", "niche_specific"],
     "angle": ["tutorial", "comparison", "myth_bust", "do_dont", "tip_hack", "transformation", "challenge"],
@@ -34,7 +36,7 @@ VOCAB = {
 # The 17 teardown elements, in card order. Each entry: (element number, label, field keys).
 ELEMENTS = [
     (1, "Performance", ["stats"]),
-    (2, "Post type", ["post_type"]),
+    (2, "Post type", ["post_type", "carousel_type"]),
     (3, "Topic", ["topic"]),
     (4, "Verbal hook", ["verbal_hook"]),
     (5, "Written hook", ["written_hook"]),

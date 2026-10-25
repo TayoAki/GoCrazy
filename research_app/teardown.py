@@ -1,13 +1,23 @@
-"""Teardown of one outlier: post details + transcript + video frames -> the 17-element card (auto fields + review fields)."""
+"""Teardown of one outlier: post details + transcript + video frames -> the 17-element card (auto fields + review fields).
+
+Carousels and TikTok slideshows are torn down slide by slide instead: every slide is saved, slide 1 is the hook, each
+slide is a scene (SEALCaM, measured text), and the madlib templates the slides' text.
+"""
 
 import json
 import re
 import threading
 
-from . import ai, annotate, db, llm, media, textstyle
+from PIL import Image
+
+from . import ai, annotate, db, llm, media, reach, textstyle
 from .annotate import field
 from .config import MEDIA, has_ffmpeg, scrapecreators_key
-from .scrapecreators import ScrapeCreators, ScrapeError
+from .scrapecreators import ScrapeCreators, ScrapeError, slideshow_from_tiktok_item
+
+SLIDE_KINDS = ("carousel", "slideshow")
+MAX_SLIDES = 20
+SPONSORED = re.compile(r"#(ad|sponsored)\b|#\w*partner\b|paid partnership")
 
 
 def start_ai(shortcode, project_id):
@@ -116,7 +126,13 @@ def _run_scenes(shortcode, project_id, data):
         with db.connect() as conn:
             settings = db.project_settings(conn.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone())
         frames = [MEDIA / shortcode / url.rsplit("/", 1)[-1] for sc in data.get("scenes") or [] for url in sc["frames"]]
-        if not frames or not all(f.exists() for f in frames):  # only fetch the video again when the scene frames are gone
+        if data.get("kind") in SLIDE_KINDS and (not frames or not all(f.exists() for f in frames)):
+            client = ScrapeCreators(scrapecreators_key())
+            with db.connect() as conn:
+                reel = conn.execute("SELECT * FROM reels WHERE shortcode=?", (shortcode,)).fetchone()
+            if not save_slides(shortcode, _fresh_slides(client, reel)[0]):
+                raise RuntimeError("Could not download the slides")
+        elif not frames or not all(f.exists() for f in frames):  # only fetch the video again when the scene frames are gone
             client = ScrapeCreators(scrapecreators_key())
             post = client.post(data["url"])
             if not post.get("video_url"):
@@ -191,11 +207,14 @@ def build(shortcode, project_id):
         creator = conn.execute("SELECT * FROM creators WHERE username=?", (reel["username"],)).fetchone()
         outlier = conn.execute("SELECT * FROM outliers WHERE project_id=? AND shortcode=?", (project_id, shortcode)).fetchone()
         project = conn.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone()
-        siblings = conn.execute("SELECT shortcode, url, caption, taken_at FROM reels WHERE username=? AND shortcode<>?",
-                                (reel["username"], shortcode)).fetchall()
+        siblings = conn.execute("SELECT shortcode, url, caption, taken_at FROM reels WHERE username=? AND shortcode<>? AND kind=?",
+                                (reel["username"], shortcode, reel["kind"])).fetchall()
         previous = conn.execute("SELECT data FROM teardowns WHERE shortcode=?", (shortcode,)).fetchone()
+        lpv = reach.likes_per_view(conn, project_id)
     settings = db.project_settings(project)
     client = ScrapeCreators(scrapecreators_key())
+    if reel["kind"] in SLIDE_KINDS:
+        return _build_slides(reel, creator, outlier, settings, siblings, previous, client, lpv)
     notes = []
 
     post = client.post(reel["url"])
@@ -204,7 +223,7 @@ def build(shortcode, project_id):
     caption = (caption_edges[0].get("node", {}).get("text") if caption_edges else None) or reel["caption"] or ""
     typename = post.get("__typename") or ""
     post_type = "carousel" if "Sidecar" in typename else "photo" if "Image" in typename else "reel"
-    if post.get("is_paid_partnership") or post.get("is_ad") or re.search(r"#(ad|sponsored)\b|#\w*partner\b|paid partnership", caption.lower()):
+    if post.get("is_paid_partnership") or post.get("is_ad") or SPONSORED.search(caption.lower()):
         notes.append("Sponsored or paid-partnership post. The playbook excludes these from outliers, so consider dismissing it.")
 
     transcript = None
@@ -300,4 +319,135 @@ def build(shortcode, project_id):
             data = apply_madlib(data, settings["ai_model"])
         except Exception as e:
             notes.append(f"Madlib failed: {e}")
+    return data
+
+
+# ---------- carousels and slideshows ----------
+
+def save_slides(shortcode, slides):
+    """Save each slide as slide_NN.jpg (at most 1080 px wide) and slide 1, smaller, as the cover. Returns the file names in
+    order, or None when a link no longer works (Instagram and TikTok links expire)."""
+    out = media.media_dir(shortcode)
+    for old in out.glob("slide_*.jpg"):
+        old.unlink()
+    names = []
+    for k, slide in enumerate(slides[:MAX_SLIDES], 1):
+        raw = out / f"_slide_{k}"
+        try:
+            if not media.download(slide["url"], raw):
+                return None
+            im = Image.open(raw).convert("RGB")
+            if im.width > 1080:
+                im = im.resize((1080, round(im.height * 1080 / im.width)), Image.LANCZOS)
+            im.save(out / f"slide_{k:02d}.jpg", "JPEG", quality=88)
+            if k == 1:
+                im.resize((360, round(im.height * 360 / im.width)), Image.LANCZOS).save(media.cover_path(shortcode), "JPEG", quality=85)
+        except OSError:  # not an image (an expired link can answer with an error page)
+            return None
+        finally:
+            raw.unlink(missing_ok=True)
+        names.append(f"slide_{k:02d}.jpg")
+    return names
+
+
+def _fresh_slides(client, reel):
+    """Slide links, sound and caption from a fresh post lookup (1 credit). Returns (slides, music, caption, post)."""
+    if reel["kind"] == "slideshow":
+        detail = client.tiktok_post(reel["url"])
+        fresh = slideshow_from_tiktok_item(detail) if detail else {}
+        return fresh.get("slides") or [], fresh.get("music"), fresh.get("caption"), detail
+    post = client.post(reel["url"])
+    edges = (post.get("edge_sidecar_to_children") or {}).get("edges") or []
+    slides = [{"url": e["node"]["display_url"], "video": bool(e["node"].get("is_video"))} for e in edges if e.get("node", {}).get("display_url")]
+    music = post.get("clips_music_attribution_info") or {}
+    caption_edges = (post.get("edge_media_to_caption") or {}).get("edges") or []
+    caption = caption_edges[0].get("node", {}).get("text") if caption_edges else None
+    return slides, ({"title": music["song_name"], "artist": music.get("artist_name")} if music.get("song_name") else None), caption, post
+
+
+def _build_slides(reel, creator, outlier, settings, siblings, previous, client, lpv):
+    shortcode, kind = reel["shortcode"], reel["kind"]
+    notes = []
+    slides = json.loads(reel["slides"] or "[]")
+    music = json.loads(reel["music"]) if reel["music"] else None
+    caption = reel["caption"] or ""
+    post = {}
+    if kind == "carousel":  # the post lookup (1 credit) adds the carousel's sound, which the posts feed leaves out
+        fresh, fresh_music, fresh_caption, post = _fresh_slides(client, reel)
+        slides, music, caption = fresh or slides, fresh_music or music, fresh_caption or caption
+    names = save_slides(shortcode, slides) if slides else None
+    if names is None and kind == "slideshow":
+        fresh, fresh_music, fresh_caption, post = _fresh_slides(client, reel)
+        names = save_slides(shortcode, fresh) if fresh else None
+        music, caption = fresh_music or music, fresh_caption or caption
+    if not names:
+        raise RuntimeError("Could not download the slides")
+    if len(slides) > MAX_SLIDES:
+        notes.append(f"{len(slides)} slides: the first {MAX_SLIDES} are torn down.")
+    if any(s.get("video") for s in slides[:MAX_SLIDES]):
+        notes.append("Some slides are videos: their cover image stands in for them.")
+    if post.get("is_paid_partnership") or post.get("is_ad") or SPONSORED.search(caption.lower()):
+        notes.append("Sponsored or paid-partnership post. The playbook excludes these from outliers, so consider dismissing it.")
+
+    first_line = caption.split("\n")[0]
+    keyword = outlier["keyword"] if outlier else None
+    views = reach.views(reel, lpv)
+    estimated = kind == "carousel"
+    sound = f'"{music["title"]}" by {music.get("artist") or "unknown"}' if music else None
+    what = "TikTok photo slideshow" if kind == "slideshow" else "Instagram carousel"
+    fields = {
+        "stats": field({"views": views, "views_estimated": estimated, "followers": creator["followers"] if creator else None,
+                        "ratio": outlier["ratio"] if outlier else None, "posted": reel["taken_at"], "likes": reel["likes"],
+                        "comments": reel["comments"], "saves": reel["saves"], "shares": reel["shares"], "slides": len(names),
+                        "duration_s": None}, "api",
+                       f"Instagram shows no views for carousels: views estimated from likes at this niche's {lpv:.2%} "
+                       "likes per view" if estimated else None),
+        "post_type": field("carousel", "api", what),
+        "carousel_type": field(None, "needs_review", "Pick one of the eight carousel types"),
+        "topic": field(None, "needs_review", f'Found via "{keyword}"; set the sub-niche' if keyword else "Set the sub-niche"),
+        "verbal_hook": field(None, "auto", "Slides: nothing is spoken"),
+        "written_hook": field(None, "needs_review", "Copy the largest text on slide 1"),
+        "visual_hook": field(None, "needs_review", "One sentence: what slide 1 shows"),
+        "hook_pattern": annotate.hook_pattern(None, first_line),
+        "angle": field(None, "needs_review"),
+        "video_type": annotate.video_type("", caption),
+        "delivery": field(None, "needs_review"),
+        "story_type": field(None, "needs_review", "Only when delivery is storytelling"),
+        **annotate.series(None, caption, siblings),
+        "content_type": field(None, "needs_review"),
+        "funnel": field(None, "needs_review"),
+        "complexity": field(None, "needs_review"),
+        "structure_pattern": field(None, "needs_review", "Label each slide's beat (HOOK, STEP, PROOF…)"),
+        "word_count": field(None, "auto", "Slides: see the text on each slide"),
+        "words_per_second": field(None, "auto", "Slides"),
+        "value_summary": field(None, "needs_review", "One sentence: what the viewer learns or sees"),
+        **annotate.cta("", caption),
+        "format": field(None, "auto", f"{len(names)} slides, not a video: see the carousel type"),
+        "audio": field("music_only", "api", f"Sound: {sound}") if music else field("none", "api", "No sound on the post"),
+        "avg_shot_s": field(None, "auto", "Slides"),
+        "cuts": field(None, "auto", "Slides"),
+        "captions": field(None, "needs_review", "Text style on the slides, e.g. white sans on a dark box, centred"),
+    }
+    if previous and previous["data"]:  # human edits survive a re-run
+        for key, old in json.loads(previous["data"])["fields"].items():
+            if old.get("source") == "human" and key in fields:
+                fields[key] = old
+
+    base = f"/media/{shortcode}/"
+    urls = [base + n for n in names]
+    data = {
+        "shortcode": shortcode, "url": reel["url"], "username": reel["username"], "caption": caption, "kind": kind,
+        "platform": reel["platform"], "fields": fields, "transcript": None, "notes": notes, "credits_used": client.credits_used,
+        "music": {"song_name": music["title"], "artist_name": music.get("artist"), "uses_original_audio": None} if music else None,
+        "media": {"cover": base + "cover.jpg", "hook_frames": urls[:1], "frames": urls},
+        "scenes": [{"i": k, "slide": True, "start": None, "end": None, "flash_cuts": 0, "cut": True, "frames": [u],
+                    "video": bool((slides[k - 1] if k - 1 < len(slides) else {}).get("video"))} for k, u in enumerate(urls, 1)],
+        "created_at": db.now(),
+    }
+    if settings["ai_annotation"] and llm.available():
+        for step, name in ((apply_ai, "AI analysis"), (apply_scenes, "Scene breakdown"), (apply_madlib, "Madlib")):
+            try:
+                data = step(data, settings["ai_model"])
+            except Exception as e:
+                notes.append(f"{name} failed: {e}")
     return data

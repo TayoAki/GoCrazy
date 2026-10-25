@@ -1,13 +1,19 @@
-"""Research run: keyword search -> creators -> their reels -> outliers (views / followers >= min_ratio)."""
+"""Research run: keyword search -> creators -> their posts -> outliers (views / followers >= min_ratio).
+
+Instagram reels and carousels come from the same creators (found by reel and account search); TikTok slideshows come
+from TikTok's Top search and then each slideshow creator's feed. Instagram shows no views for carousels, so a carousel's
+views are estimated from its likes at the niche's own likes-per-view rate, and its outlier is marked as estimated.
+"""
 
 import json
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 
-from . import db, doubledown, media
+from . import db, doubledown, media, reach
 from .config import scrapecreators_key
-from .scrapecreators import ScrapeCreators, ScrapeError, reel_from_user_item
+from .scrapecreators import (ScrapeCreators, ScrapeError, carousel_from_post_item, is_slideshow, reel_from_post_item,
+                             reel_from_user_item, slideshow_from_tiktok_item)
 
 _stop_flags = {}
 
@@ -56,15 +62,64 @@ def _update(run_id, **fields):
 
 
 def upsert_reel(conn, reel, username):
+    """Save a reel, carousel or slideshow (the reels table holds every kind of post)."""
+    row = {"platform": "instagram", "kind": "reel", "saves": None, "shares": None, "slides": None, "music": None,
+           **reel, "username": username, "fetched_at": db.now()}
+    row["slides"] = json.dumps(row["slides"]) if row["slides"] else None
+    row["music"] = json.dumps(row["music"]) if row["music"] else None
     conn.execute("""
-        INSERT INTO reels (shortcode, username, url, views, likes, comments, taken_at, caption, thumb_url, duration, fetched_at)
-        VALUES (:shortcode, :username, :url, :views, :likes, :comments, :taken_at, :caption, :thumb_url, :duration, :fetched_at)
+        INSERT INTO reels (shortcode, username, url, views, likes, comments, taken_at, caption, thumb_url, duration, fetched_at,
+                           platform, kind, saves, shares, slides, music)
+        VALUES (:shortcode, :username, :url, :views, :likes, :comments, :taken_at, :caption, :thumb_url, :duration, :fetched_at,
+                :platform, :kind, :saves, :shares, :slides, :music)
         ON CONFLICT(shortcode) DO UPDATE SET
             views=COALESCE(excluded.views, reels.views), likes=COALESCE(excluded.likes, reels.likes),
             comments=COALESCE(excluded.comments, reels.comments), taken_at=COALESCE(excluded.taken_at, reels.taken_at),
             caption=COALESCE(NULLIF(excluded.caption, ''), reels.caption), thumb_url=COALESCE(excluded.thumb_url, reels.thumb_url),
-            duration=COALESCE(excluded.duration, reels.duration), fetched_at=excluded.fetched_at""",
-        {**reel, "username": username, "fetched_at": db.now()})
+            duration=COALESCE(excluded.duration, reels.duration), fetched_at=excluded.fetched_at,
+            saves=COALESCE(excluded.saves, reels.saves), shares=COALESCE(excluded.shares, reels.shares),
+            slides=COALESCE(excluded.slides, reels.slides), music=COALESCE(excluded.music, reels.music)""", row)
+
+
+def save_creator(conn, username, full_name, followers, is_verified):
+    conn.execute("""INSERT INTO creators (username, full_name, followers, is_verified, profile_fetched_at) VALUES (?,?,?,?,?)
+                    ON CONFLICT(username) DO UPDATE SET full_name=COALESCE(excluded.full_name, creators.full_name),
+                    followers=excluded.followers, is_verified=excluded.is_verified, profile_fetched_at=excluded.profile_fetched_at""",
+                 (username, full_name, followers, int(bool(is_verified)), db.now()))
+
+
+def save_project_creators(conn, project_id, found):
+    for username, entry in found.items():
+        row = conn.execute("SELECT keywords FROM project_creators WHERE project_id=? AND username=?",
+                           (project_id, username)).fetchone()
+        kws = sorted(set(json.loads(row["keywords"])) | entry["keywords"]) if row else sorted(entry["keywords"])
+        conn.execute("""INSERT INTO project_creators (project_id, username, keywords, status) VALUES (?,?,?,'found')
+                        ON CONFLICT(project_id, username) DO UPDATE SET keywords=excluded.keywords""",
+                     (project_id, username, json.dumps(kws)))
+
+
+def mark_outliers(conn, project_id, username, followers, settings, keyword, lpv):
+    """Every post of the creator's that passes the outlier test, for the kinds the project researches. Returns the new count."""
+    kinds = reach.enabled_kinds(settings)
+    if not kinds:
+        return 0
+    new = 0
+    rows = conn.execute(f"SELECT shortcode, kind, views, likes, taken_at FROM reels WHERE username=? AND kind IN "
+                        f"({','.join('?' * len(kinds))})", (username, *kinds)).fetchall()
+    for post in rows:
+        views = reach.views(post, lpv)
+        if not views:
+            continue
+        age = age_days(post["taken_at"])
+        ratio = round(views / followers, 1)
+        if ratio >= settings["min_ratio"] and (age is None or age <= settings["max_age_days"]):
+            existed = conn.execute("SELECT 1 FROM outliers WHERE project_id=? AND shortcode=?",
+                                   (project_id, post["shortcode"])).fetchone()
+            conn.execute("""INSERT INTO outliers (project_id, shortcode, ratio, keyword, measure, created_at) VALUES (?,?,?,?,?,?)
+                            ON CONFLICT(project_id, shortcode) DO UPDATE SET ratio=excluded.ratio, measure=excluded.measure""",
+                         (project_id, post["shortcode"], ratio, keyword, "likes" if post["kind"] == "carousel" else "views", db.now()))
+            new += not existed
+    return new
 
 
 def _run(run_id, project_id, stop):
@@ -82,9 +137,17 @@ def _run(run_id, project_id, stop):
             raise BudgetReached()
 
     status, message = "done", None
+    instagram = settings["reels"] or settings["carousels"]
+    # Share of the progress bar each platform gets.
+    split = (0.6 if settings["slideshows"] else 0.9) if instagram else 0.0
     try:
-        found = _search_phase(run_id, project_id, client, keywords, settings, stats, check)
-        _scan_phase(run_id, project_id, client, found, settings, stats, check, stop)
+        if instagram:
+            found = _search_phase(run_id, project_id, client, keywords, settings, stats, check, split / 0.9)
+            with db.connect() as conn:
+                lpv = reach.likes_per_view(conn, project_id)
+            _scan_phase(run_id, project_id, client, found, settings, stats, check, stop, split / 0.9, lpv)
+        if settings["slideshows"]:
+            _tiktok_phase(run_id, project_id, client, keywords, settings, stats, check, stop, split, 0.9)
     except Stopped:
         status, message = "stopped", "Stopped by you"
     except BudgetReached:
@@ -110,7 +173,7 @@ def _run(run_id, project_id, stop):
     _stop_flags.pop(run_id, None)
 
 
-def _search_phase(run_id, project_id, client, keywords, settings, stats, check):
+def _search_phase(run_id, project_id, client, keywords, settings, stats, check, scale=1.0):
     found = {h: {"keywords": set(), "full_name": None, "is_verified": None, "study": True}
              for h in settings.get("study_accounts") or []}
     jobs = [(kw, page) for kw in keywords for page in range(1, settings["search_pages"] + 1)]
@@ -119,7 +182,7 @@ def _search_phase(run_id, project_id, client, keywords, settings, stats, check):
         if kw in exhausted:
             continue
         check()
-        _update(run_id, phase="search", progress=0.2 * i / max(len(jobs), 1),
+        _update(run_id, phase="search", progress=scale * 0.2 * i / max(len(jobs), 1),
                 message=f'Searching "{kw}" (page {page})', credits_used=client.credits_used)
         try:
             reels = client.search_reels(kw, page, settings["date_posted"])
@@ -150,7 +213,7 @@ def _search_phase(run_id, project_id, client, keywords, settings, stats, check):
     if settings["account_search"]:
         for i, kw in enumerate(keywords):
             check()
-            _update(run_id, phase="search", progress=0.2 + 0.1 * i / max(len(keywords), 1),
+            _update(run_id, phase="search", progress=scale * (0.2 + 0.1 * i / max(len(keywords), 1)),
                     message=f'Searching accounts for "{kw}"', credits_used=client.credits_used)
             try:
                 profiles = client.search_profiles(kw)
@@ -169,23 +232,14 @@ def _search_phase(run_id, project_id, client, keywords, settings, stats, check):
                                                 "is_verified": prof.get("is_verified")})["keywords"].add(kw)
                     if prof.get("follower_count") is not None:
                         # Cache the count so the scan phase skips a paid profile lookup.
-                        conn.execute("""INSERT INTO creators (username, full_name, followers, is_verified, profile_fetched_at)
-                                        VALUES (?,?,?,?,?) ON CONFLICT(username) DO UPDATE SET followers=excluded.followers,
-                                        full_name=excluded.full_name, profile_fetched_at=excluded.profile_fetched_at""",
-                                     (username, prof.get("full_name"), prof["follower_count"], int(bool(prof.get("is_verified"))), db.now()))
+                        save_creator(conn, username, prof.get("full_name"), prof["follower_count"], prof.get("is_verified"))
     with db.connect() as conn:
-        for username, entry in found.items():
-            row = conn.execute("SELECT keywords FROM project_creators WHERE project_id=? AND username=?",
-                               (project_id, username)).fetchone()
-            kws = sorted(set(json.loads(row["keywords"])) | entry["keywords"]) if row else sorted(entry["keywords"])
-            conn.execute("""INSERT INTO project_creators (project_id, username, keywords, status) VALUES (?,?,?,'found')
-                            ON CONFLICT(project_id, username) DO UPDATE SET keywords=excluded.keywords""",
-                         (project_id, username, json.dumps(kws)))
+        save_project_creators(conn, project_id, found)
     stats["creators_found"] = len(found)
     return found
 
 
-def _scan_phase(run_id, project_id, client, found, settings, stats, check, stop):
+def _scan_phase(run_id, project_id, client, found, settings, stats, check, stop, scale=1.0, lpv=reach.LIKES_PER_VIEW):
     # Creators surfaced by more keywords are more central to the niche, so scan them first.
     # Accounts you named go first and don't count against max_creators.
     study = [kv for kv in found.items() if kv[1].get("study")]
@@ -195,7 +249,7 @@ def _scan_phase(run_id, project_id, client, found, settings, stats, check, stop)
         return
     lock = threading.Lock()
     with ThreadPoolExecutor(max_workers=4) as pool:
-        futures = [pool.submit(_scan_creator, client, project_id, username, info, settings, check)
+        futures = [pool.submit(_scan_creator, client, project_id, username, info, settings, check, lpv)
                    for username, info in ranked]
         try:
             for done, fut in enumerate(as_completed(futures), 1):
@@ -204,7 +258,7 @@ def _scan_phase(run_id, project_id, client, found, settings, stats, check, stop)
                     stats["creators_scanned"] += result["scanned"]
                     stats["reels_checked"] += result["reels"]
                     stats["new_outliers"] += result["new_outliers"]
-                _update(run_id, phase="creators", progress=0.3 + 0.6 * done / len(futures),
+                _update(run_id, phase="creators", progress=scale * (0.3 + 0.6 * done / len(futures)),
                         message=f"Scanned {done}/{len(futures)} creators · {stats['new_outliers']} new outliers",
                         credits_used=client.credits_used)
         except (Stopped, BudgetReached, ScrapeError):
@@ -213,7 +267,7 @@ def _scan_phase(run_id, project_id, client, found, settings, stats, check, stop)
             raise
 
 
-def _scan_creator(client, project_id, username, info, settings, check):
+def _scan_creator(client, project_id, username, info, settings, check, lpv=reach.LIKES_PER_VIEW):
     result = {"scanned": 0, "reels": 0, "new_outliers": 0}
 
     def set_status(status):
@@ -238,11 +292,7 @@ def _scan_creator(client, project_id, username, info, settings, check):
             return result
         followers = (user.get("edge_followed_by") or {}).get("count")
         with db.connect() as conn:
-            conn.execute("""INSERT INTO creators (username, full_name, followers, is_verified, profile_fetched_at) VALUES (?,?,?,?,?)
-                            ON CONFLICT(username) DO UPDATE SET full_name=excluded.full_name, followers=excluded.followers,
-                            is_verified=excluded.is_verified, profile_fetched_at=excluded.profile_fetched_at""",
-                         (username, user.get("full_name") or info.get("full_name"), followers,
-                          int(bool(user.get("is_verified"))), db.now()))
+            save_creator(conn, username, user.get("full_name") or info.get("full_name"), followers, user.get("is_verified"))
     if not followers:
         set_status("error")
         return result
@@ -257,38 +307,161 @@ def _scan_creator(client, project_id, username, info, settings, check):
             set_status("too_big")
             return result
 
-    max_id = None
-    for _ in range(max(settings["reel_pages"], 8) if info.get("study") else settings["reel_pages"]):
+    deep = lambda pages: max(pages, 8) if info.get("study") else pages
+    if settings["reels"]:
+        result["reels"] += _pages(check, lambda max_id: client.user_reels(username, max_id), deep(settings["reel_pages"]),
+                                  lambda item: reel_from_user_item(item), username)
+    if settings["carousels"]:
+        def from_feed(item):  # the posts feed mixes reels, carousels and photos; photos are left out
+            if item.get("media_type") == 8 and not item.get("is_paid_partnership"):
+                post = carousel_from_post_item(item)
+                return {**post, "likes": None} if item.get("like_and_view_counts_disabled") else post
+            return reel_from_post_item(item) if item.get("media_type") == 2 and item.get("play_count") else None
+        result["reels"] += _pages(check, lambda max_id: client.user_posts(username, max_id), deep(settings["post_pages"]),
+                                  from_feed, username)
+
+    keyword = f"@{username}" if info.get("study") else sorted(info["keywords"])[0] if info.get("keywords") else None
+    with db.connect() as conn:
+        conn.execute("UPDATE creators SET reels_fetched_at=? WHERE username=?", (db.now(), username))
+        if in_range:
+            result["new_outliers"] += mark_outliers(conn, project_id, username, followers, settings, keyword, lpv)
+    set_status("scanned")
+    result["scanned"] = 1
+    return result
+
+
+def _pages(check, fetch, pages, normalize, username):
+    """Fetch up to `pages` pages of a creator's feed and save each post `normalize` keeps. Returns how many were saved."""
+    saved, cursor = 0, None
+    for _ in range(pages):
         check()
         try:
-            items, max_id = client.user_reels(username, max_id)
+            items, cursor = fetch(cursor)
         except ScrapeError as e:
             if e.out_of_credits:
                 raise
             break
         with db.connect() as conn:
             for item in items:
-                reel = reel_from_user_item(item)
-                if reel["shortcode"]:
-                    upsert_reel(conn, reel, username)
-                    result["reels"] += 1
-        if not items or not max_id:
+                post = normalize(item)
+                if post and post["shortcode"]:
+                    upsert_reel(conn, post, username)
+                    saved += 1
+        if not items or not cursor:
             break
+    return saved
 
-    keyword = f"@{username}" if info.get("study") else sorted(info["keywords"])[0] if info.get("keywords") else None
+
+# ---------- TikTok slideshows ----------
+
+def _tiktok_phase(run_id, project_id, client, keywords, settings, stats, check, stop, start, end):
+    """Top search per keyword (the only TikTok search that returns slideshows), then each slideshow creator's feed."""
+    publish_time = "last-6-months" if settings["max_age_days"] <= 183 else None
+    found, cursors = {}, {}
+    jobs = [(kw, page) for page in range(settings["tiktok_search_pages"]) for kw in keywords]
+    for i, (kw, page) in enumerate(jobs):
+        if page and not cursors.get(kw):
+            continue  # that keyword has no more results
+        check()
+        _update(run_id, phase="tiktok", progress=start + (end - start) * 0.3 * i / max(len(jobs), 1),
+                message=f'Searching TikTok slideshows for "{kw}" (page {page + 1})', credits_used=client.credits_used)
+        try:
+            items, cursors[kw] = client.tiktok_top(kw, cursors.get(kw), publish_time)
+        except ScrapeError as e:
+            if e.out_of_credits:
+                raise
+            db.log(project_id, "warning", f'TikTok search failed for "{kw}" page {page + 1}: {e}')
+            cursors[kw] = None
+            continue
+        stats["searches"] += 1
+        with db.connect() as conn:
+            for item in items:
+                _save_tiktok_item(conn, item, found, kw)
+    with db.connect() as conn:
+        save_project_creators(conn, project_id, found)
+    stats["creators_found"] += len(found)
+    ranked = sorted(found.items(), key=lambda kv: (-len(kv[1]["keywords"]), kv[0]))
+    with db.connect() as conn:
+        # Search results already carry follower counts, so the slideshows found there are tested even for creators
+        # whose feeds aren't scanned.
+        for username, info in ranked[settings["max_creators"]:]:
+            _tiktok_outliers(conn, project_id, username, info, settings)
+    ranked = ranked[: settings["max_creators"]]
+    if not ranked:
+        return
+    lock = threading.Lock()
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        futures = [pool.submit(_scan_tiktok_creator, client, project_id, username, info, settings, check)
+                   for username, info in ranked]
+        try:
+            for done, fut in enumerate(as_completed(futures), 1):
+                result = fut.result()
+                with lock:
+                    stats["creators_scanned"] += result["scanned"]
+                    stats["reels_checked"] += result["reels"]
+                    stats["new_outliers"] += result["new_outliers"]
+                _update(run_id, phase="tiktok", progress=start + (end - start) * (0.3 + 0.7 * done / len(futures)),
+                        message=f"Scanned {done}/{len(futures)} TikTok creators · {stats['new_outliers']} new outliers",
+                        credits_used=client.credits_used)
+        except (Stopped, BudgetReached, ScrapeError):
+            stop.set()
+            pool.shutdown(cancel_futures=True)
+            raise
+
+
+def _save_tiktok_item(conn, item, found=None, keyword=None):
+    """Save one TikTok post if it is a slideshow, with its creator's follower count. Returns the "tt:" username or None."""
+    author = item.get("author") or {}
+    if not is_slideshow(item) or not author.get("unique_id") or item.get("is_ad") or item.get("is_paid_partnership"):
+        return None
+    username = "tt:" + author["unique_id"]
+    if author.get("follower_count") is not None:
+        save_creator(conn, username, author.get("nickname"), author["follower_count"], author.get("verification_type") == 1)
+    upsert_reel(conn, slideshow_from_tiktok_item(item), username)
+    if found is not None:
+        found.setdefault(username, {"keywords": set()})["keywords"].add(keyword)
+    return username
+
+
+def _tiktok_outliers(conn, project_id, username, info, settings, scanned=False):
+    """Set the creator's status from their follower count and mark their outlier slideshows. Returns (status, new outliers)."""
+    row = conn.execute("SELECT followers FROM creators WHERE username=?", (username,)).fetchone()
+    followers = row["followers"] if row else None
+    status = ("error" if not followers else "too_small" if followers < settings["min_followers"] else
+              "too_big" if followers > settings.get("double_down_max_followers", settings["max_followers"]) else
+              "scanned" if scanned else "found")
+    conn.execute("UPDATE project_creators SET status=? WHERE project_id=? AND username=?", (status, project_id, username))
+    new = 0
+    if followers and settings["min_followers"] <= followers <= settings["max_followers"]:
+        keyword = sorted(info["keywords"])[0] if info.get("keywords") else None
+        new = mark_outliers(conn, project_id, username, followers, settings, keyword, reach.LIKES_PER_VIEW)
+    return status, new
+
+
+def _scan_tiktok_creator(client, project_id, username, info, settings, check):
+    result = {"scanned": 0, "reels": 0, "new_outliers": 0}
+    with db.connect() as conn:
+        row = conn.execute("SELECT followers FROM creators WHERE username=?", (username,)).fetchone()
+    followers = row["followers"] if row else None
+    if followers and not settings["min_followers"] <= followers <= settings.get("double_down_max_followers", settings["max_followers"]):
+        with db.connect() as conn:  # out of range: its feed isn't worth the credits
+            _tiktok_outliers(conn, project_id, username, info, settings)
+        return result
+    cursor = None
+    for _ in range(settings["tiktok_pages"]):
+        check()
+        try:
+            items, cursor = client.tiktok_videos(username[3:], cursor)
+        except ScrapeError as e:
+            if e.out_of_credits:
+                raise
+            break
+        with db.connect() as conn:
+            result["reels"] += sum(bool(_save_tiktok_item(conn, item)) for item in items)
+        if not items or not cursor:
+            break
     with db.connect() as conn:
         conn.execute("UPDATE creators SET reels_fetched_at=? WHERE username=?", (db.now(), username))
-        for reel in conn.execute("SELECT shortcode, views, taken_at FROM reels WHERE username=? AND views IS NOT NULL", (username,)):
-            age = age_days(reel["taken_at"])
-            ratio = round(reel["views"] / followers, 1)
-            if in_range and ratio >= settings["min_ratio"] and (age is None or age <= settings["max_age_days"]):
-                existed = conn.execute("SELECT 1 FROM outliers WHERE project_id=? AND shortcode=?",
-                                       (project_id, reel["shortcode"])).fetchone()
-                conn.execute("""INSERT INTO outliers (project_id, shortcode, ratio, keyword, created_at) VALUES (?,?,?,?,?)
-                                ON CONFLICT(project_id, shortcode) DO UPDATE SET ratio=excluded.ratio""",
-                             (project_id, reel["shortcode"], ratio, keyword, db.now()))
-                if not existed:
-                    result["new_outliers"] += 1
-    set_status("scanned")
-    result["scanned"] = 1
+        status, result["new_outliers"] = _tiktok_outliers(conn, project_id, username, info, settings, scanned=True)
+    result["scanned"] = int(status == "scanned")
     return result

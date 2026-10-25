@@ -12,6 +12,7 @@ from .ai import SEALCAM_KEYS
 from .planner import reference_scenes
 
 SEALCAM_NAMES = {"S": "Subject", "E": "Environment", "A": "Action", "L": "Lighting", "Ca": "Camera", "M": "Metatokens"}
+KIND_LABEL = {"reel": "reel", "carousel": "Instagram carousel", "slideshow": "TikTok slideshow"}
 
 
 def _label(value):
@@ -36,11 +37,12 @@ def _sources(shortcodes):
     if not shortcodes:
         return {}
     with db.connect() as conn:
-        rows = conn.execute(f"""SELECT o.shortcode, MAX(o.ratio) AS ratio, MAX(o.basis) AS basis, r.username, r.url FROM outliers o
+        rows = conn.execute(f"""SELECT o.shortcode, MAX(o.ratio) AS ratio, MAX(o.basis) AS basis, MAX(o.measure) AS measure,
+                                       r.username, r.url, r.kind FROM outliers o
                                 JOIN reels r ON r.shortcode = o.shortcode
                                 WHERE o.shortcode IN ({",".join("?" * len(shortcodes))}) GROUP BY o.shortcode""",
                              list(shortcodes)).fetchall()
-    return {r["shortcode"]: dict(r) for r in rows}
+    return {r["shortcode"]: {**dict(r), "who": db.who(r["username"])} for r in rows}
 
 
 def _cards(shortcodes):
@@ -62,16 +64,20 @@ def _card_markdown(src, card):
     f, music = card["fields"], card["music"]
     st = f.get("stats") or {}
     num = lambda n: f"{n:,}" if isinstance(n, (int, float)) else None
-    stats = [f"{num(st.get('views'))} views" if st.get("views") else None,
+    stats = [(f"about {num(st.get('views'))} views (estimated from likes)" if st.get("views_estimated") else
+              f"{num(st.get('views'))} views") if st.get("views") else None,
              f"{num(st.get('followers'))} followers ({src['ratio']}×)" if st.get("followers") else None,
              f"{num(st.get('likes'))} likes" if st.get("likes") is not None else None,
              f"{num(st.get('comments'))} comments" if st.get("comments") is not None else None,
+             f"{num(st.get('saves'))} saves" if st.get("saves") is not None else None,
+             f"{st['slides']} slides" if st.get("slides") else None,
              f"{round(st['duration_s'])} s" if st.get("duration_s") else None,
              f"posted {_day(st['posted'][:10])}" if st.get("posted") else None]
     hook = [f"said “{f['verbal_hook']}”" if f.get("verbal_hook") else None,
             f"on screen “{f['written_hook']}”" if f.get("written_hook") else None,
             f"shows {f['visual_hook']}" if f.get("visual_hook") else None]
-    kinds = [(k, _label(f.get(k))) for k in ("hook_pattern", "format", "angle", "video_type", "delivery", "story_type", "complexity")]
+    kinds = [(k, _label(f.get(k))) for k in ("hook_pattern", "format", "carousel_type", "angle", "video_type", "delivery",
+                                              "story_type", "complexity")]
     pace = [f.get("structure_pattern"), f"{f['cuts']} hard cuts" if f.get("cuts") is not None else None,
             f"average shot {f['avg_shot_s']} s" if f.get("avg_shot_s") else None,
             f"{f['word_count']} words ({f['words_per_second']}/s)" if f.get("word_count") else None]
@@ -85,7 +91,8 @@ def _card_markdown(src, card):
     caption = (card.get("caption") or "").split("\n")[0][:200]
     lines = [("Stats", " · ".join(x for x in stats if x)),
              ("Why it's a reference", "a doubled-down template: the account keeps posting it and it keeps working"
-              if src.get("basis") == "template" else f"it passed the outlier test ({src['ratio']}× the creator's followers)"),
+              if src.get("basis") == "template" else f"it passed the outlier test ({src['ratio']}× the creator's followers"
+              + (", from views estimated from likes)" if src.get("measure") == "likes" else ")")),
              ("Hook", " · ".join(x for x in hook if x)),
              ("Type", " · ".join(f"{_label(k).capitalize()}: {v}" for k, v in kinds if v)),
              ("Structure", " · ".join(str(x) for x in pace if x)),
@@ -121,7 +128,7 @@ def _madlib_markdown(m, h):
 def _handles(text, sources):
     text = str(text or "")
     for shortcode, s in sources.items():
-        text = text.replace(shortcode, "@" + s["username"])
+        text = text.replace(shortcode, s["who"])
     return text
 
 
@@ -134,18 +141,23 @@ def post_markdown(post, rates, sources, refs=None, level=1, cards=None):
     t = lambda text: _handles(text, sources)
     hook, cta = post.get("hook") or {}, post.get("cta") or {}
     odds = post.get("odds") or {}
+    slides = post.get("post_kind") in ("carousel", "slideshow")
     meta = [_day(post["date"]), post["funnel"].upper(), _label(post.get("content_type")).capitalize(),
-            _label(post.get("format")).capitalize(), f"about {post['length_s']} s" if post.get("length_s") else ""]
+            KIND_LABEL[post["post_kind"]].capitalize() + f" of {len(post.get('beats') or [])} slides" if slides
+            else _label(post.get("format")).capitalize(), f"about {post['length_s']} s" if post.get("length_s") else ""]
     style = ", ".join(x for x in (_label(post.get("complexity")), _label(post.get("delivery")),
                                   f"{_label(post.get('story_type'))} story" if _label(post.get("story_type")) else "") if x)
     out = [f"{h} {t(post.get('title'))}", "", " · ".join(x for x in meta if x), "",
            f"{h}# The idea", "",
            f"- **Topic:** {t(post.get('topic'))}",
-           f"- **Angle:** {_label(post.get('angle')).capitalize()} · **Hook pattern:** {_label(post.get('hook_pattern')).capitalize()}"
+           (f"- **Carousel type:** {_label(post.get('carousel_type')).capitalize()} · " if post.get("carousel_type") else "- ")
+           + f"**Angle:** {_label(post.get('angle')).capitalize()} · **Hook pattern:** {_label(post.get('hook_pattern')).capitalize()}"
            + (f" · **Style:** {style}" if style else "")]
     if post.get("series_marker"):
         out.append(f"- **Series:** {post['series_marker']}")
-    out += [f"- **Odds:** {_pct(odds.get('p5'))} chance of a 5× outlier (this niche's base rate is {_pct(rates.get('p5'))}), "
+    rates = rates.get(odds.get("kind") or "reel") or rates.get("reel") or {} if "p5" not in rates else rates
+    out += [f"- **Odds:** {_pct(odds.get('p5'))} chance of a 5× outlier (this niche's base rate for "
+            f"{KIND_LABEL.get(odds.get('kind') or 'reel')}s is {_pct(rates.get('p5'))}), "
             f"rated {odds.get('band', 'n/a')}, {odds.get('confidence', 'low')} confidence. "
             f"{_pct(odds.get('p1'))} to beat your follower count, {_pct(odds.get('p2'))} to reach 2×, {_pct(odds.get('p10'))} to reach 10×."]
     factors = odds.get("factors") or {}
@@ -158,7 +170,8 @@ def post_markdown(post, rates, sources, refs=None, level=1, cards=None):
     borrowed = [sources[s] for s in post.get("source_outliers") or [] if s in sources]
     if borrowed:
         out.append("- **Borrows its structure from:**")
-        out += [f"  - @{s['username']}, {s['ratio']}× their followers: {s['url']}" for s in borrowed]
+        out += [f"  - {s['who']}'s {KIND_LABEL.get(s.get('kind') or 'reel')}, {s['ratio']}× their followers"
+                + (" (estimated from likes)" if s.get("measure") == "likes" else "") + f": {s['url']}" for s in borrowed]
     out += [f"- **Risk:** {t(post.get('risk'))}"]
     if post.get("reuse"):
         out.append(f"- **Check:** this script reuses its reference's own content ({', '.join(post['reuse'])}); swap it for the creator's own.")
@@ -174,20 +187,24 @@ def post_markdown(post, rates, sources, refs=None, level=1, cards=None):
     madlib_from = sources.get(post.get("madlib_source") or "")
     out += [f"{h}# Script", ""]
     if madlib_from:
-        out += [f"The script fills the madlib of @{madlib_from['username']}'s reel ({madlib_from['url']}): each line keeps its "
+        out += [f"The {'slides fill' if slides else 'script fills'} the madlib of {madlib_from['who']}'s "
+                f"{KIND_LABEL.get(madlib_from.get('kind') or 'reel')} ({madlib_from['url']}): each line keeps its "
                 "frame words and fills its slots with this creator's content.", ""]
-    out += [f"{h}## Hook (first 3 seconds)", ""]
-    for label, key in (("Say", "verbal"), ("On screen", "written"), ("Show", "visual")):
+    out += [f"{h}## {'Cover (slide 1)' if slides else 'Hook (first 3 seconds)'}", ""]
+    for label, key in ((("On the slide", "written"), ("Show", "visual")) if slides else
+                       (("Say", "verbal"), ("On screen", "written"), ("Show", "visual"))):
         value = t(hook.get(key))
         out.append(f"- **{label}:** " + (f"“{value}”" if key == "verbal" else value))
         if hook.get(f"{key}_template"):
             out.append(f"  - Madlib: `{hook[key + '_template']}`")
-    out += ["", f"{h}## Beats", ""]
+    out += ["", f"{h}## {'Slides' if slides else 'Beats'}", ""]
     for i, beat in enumerate(post.get("beats") or [], 1):
         out.append(f"{i}. **{beat.get('label')}**")
         if beat.get("template"):
             out.append(f"   - Madlib: `{beat['template']}`")
-        out += [f"   - {k}: {t(beat.get(key))}" for k, key in (("Say", "say"), ("Film", "show"), ("Edit", "edit")) if beat.get(key)]
+        rows = ((("On the slide", "text"), ("Image", "show"), ("Design", "edit")) if slides else
+                (("Say", "say"), ("Film", "show"), ("Edit", "edit")))
+        out += [f"   - {k}: {t(beat.get(key))}".replace("\n", " / ") for k, key in rows if beat.get(key)]
     tags = " ".join("#" + str(x).lstrip("#") for x in post.get("hashtags") or [])
     cta_kind = ", ".join(dict.fromkeys(x for x in (_label(post.get("cta_type")), _label(cta.get("mechanic"))) if x))
     out += ["", f"{h}## Close and post", "",
@@ -196,13 +213,18 @@ def post_markdown(post, rates, sources, refs=None, level=1, cards=None):
             f"- **Caption:** {t(post.get('caption_first_line'))}"]
     if tags:
         out.append(f"- **Hashtags:** {tags}")
+    if post.get("sound"):
+        out.append(f"- **Sound:** {t(post['sound'])}")
     shots = post.get("shots") or []
     if shots:
-        out += ["", f"{h}# Shot list (SEALCaM)", "",
+        out += ["", f"{h}# {'Slide list' if slides else 'Shot list'} (SEALCaM)", "",
+                "One entry per slide, in order. Each borrows its look from a slide in the reference breakdown below; the "
+                "subject and setting are yours." if slides else
                 "One shot per camera setup or cut, in order. Each borrows its shot grammar from a scene in the reference "
                 "breakdown below; the subject and setting are yours.", ""]
         for i, shot in enumerate(shots, 1):
-            head = " · ".join(x for x in (f"Shot {i}", shot.get("beat"), f"about {shot['duration_s']:g} s" if shot.get("duration_s") else "") if x)
+            head = " · ".join(x for x in (f"{'Slide' if slides else 'Shot'} {i}", shot.get("beat"),
+                                          f"about {shot['duration_s']:g} s" if shot.get("duration_s") else "") if x)
             out += [f"{h}## {head}", ""]
             if shot.get("say"):
                 out.append(f"- **Say:** “{t(shot['say'])}”")
@@ -231,17 +253,22 @@ def post_markdown(post, rates, sources, refs=None, level=1, cards=None):
 
 def reference_markdown(src, ref, level=1, card=None):
     h = "#" * level
-    out = [f"{h}# Reference breakdown: @{src['username']} ({src['ratio']}×)", "", src["url"], ""]
+    slides = src.get("kind") in ("carousel", "slideshow")
+    out = [f"{h}# Reference breakdown: {src['who']}'s {KIND_LABEL.get(src.get('kind') or 'reel')} ({src['ratio']}×)", "", src["url"], ""]
     if card:
         out += _card_markdown(src, card) + [""]
         if card.get("madlib"):
             out += _madlib_markdown(card["madlib"], h) + [""]
-    out += ["Scene by scene in SEALCaM. A scene that continues the same shot is a segment of a long hold.", ""]
+    out += ["Slide by slide in SEALCaM. Slide 1 is the cover." if slides else
+            "Scene by scene in SEALCaM. A scene that continues the same shot is a segment of a long hold.", ""]
     for sc in ref["scenes"]:
-        how = "hard cut" if sc.get("cut", True) else "same shot continues"
-        n = sc.get("flash_cuts") or 0
-        flashes = f" · {n} flash cut{'' if n == 1 else 's'}" if n else ""
-        out += [f"{h}## Scene {sc['i']} · {sc['start']:.1f}–{sc['end']:.1f} s · {sc.get('beat') or 'n/a'} · {how}{flashes}", ""]
+        if slides:
+            out += [f"{h}## Slide {sc['i']} · {sc.get('beat') or 'n/a'}", ""]
+        else:
+            how = "hard cut" if sc.get("cut", True) else "same shot continues"
+            n = sc.get("flash_cuts") or 0
+            flashes = f" · {n} flash cut{'' if n == 1 else 's'}" if n else ""
+            out += [f"{h}## Scene {sc['i']} · {sc['start']:.1f}–{sc['end']:.1f} s · {sc.get('beat') or 'n/a'} · {how}{flashes}", ""]
         if sc.get("said"):
             out.append(f"- **Said:** “{sc['said']}”")
         if sc.get("on_screen_text"):
@@ -255,6 +282,7 @@ def reference_markdown(src, ref, level=1, card=None):
 def plan_exports(project_id, data):
     """{"week": {...}, "posts": {slot: {...}}}, each with a filename and its Markdown."""
     posts, rates = data["posts"], data.get("rates") or {}
+    by_kind = data.get("rates_by_kind") or {"reel": rates}
     ids = {s for p in posts for s in p.get("source_outliers") or []}
     sources, refs, cards = _sources(ids), reference_scenes(ids), _cards(ids)
     with db.connect() as conn:
@@ -262,17 +290,21 @@ def plan_exports(project_id, data):
     first = posts[0]["date"] if posts else date.today().isoformat()
     week = [f"# Week of {_day(first)}", "",
             f"{len(posts)} posts for {project['niche'] or project['name'] if project else 'this niche'}, adapted from "
-            f"{data.get('teardowns_used')} teardowns of viral outliers. Odds use this niche's base rates from "
-            f"{rates.get('reels')} scanned reels: {_pct(rates.get('p1'))} beat the creator's follower count, "
-            f"{_pct(rates.get('p2'))} reach 2×, {_pct(rates.get('p5'))} reach 5×, {_pct(rates.get('p10'))} reach 10×.", "",
+            f"{data.get('teardowns_used')} teardowns of viral outliers. Odds use this niche's base rates: "
+            + "; ".join(f"from {r.get('reels')} scanned {KIND_LABEL.get(k, k)}s"
+                        + (" (views estimated from likes)" if r.get("estimated") else "")
+                        + f", {_pct(r.get('p1'))} beat the creator's follower count, {_pct(r.get('p2'))} reach 2×, "
+                        f"{_pct(r.get('p5'))} reach 5×, {_pct(r.get('p10'))} reach 10×" for k, r in by_kind.items()) + ".", "",
             "| Day | Post | Funnel | Format | Chance of a 5× outlier |", "|---|---|---|---|---|"]
     for p in posts:
         title = _handles(p.get("title"), sources).replace("|", "/")
-        week.append(f"| {_day(p['date'])} | {title} | {p['funnel'].upper()} | {_label(p.get('format')).capitalize()} | "
+        kind = p.get("post_kind") or "reel"
+        shape = KIND_LABEL[kind].capitalize() if kind != "reel" else _label(p.get("format")).capitalize()
+        week.append(f"| {_day(p['date'])} | {title} | {p['funnel'].upper()} | {shape} | "
                     f"{_pct((p.get('odds') or {}).get('p5'))} ({(p.get('odds') or {}).get('band', 'n/a')}) |")
     week.append("")
     for p in posts:  # each source's breakdown appears once, at the end, rather than under every post using it
-        week += ["---", "", post_markdown(p, rates, sources, level=2)]
+        week += ["---", "", post_markdown(p, by_kind, sources, level=2)]
     used = [s for s in dict.fromkeys(s for p in posts for s in p.get("source_outliers") or []) if s in refs and s in sources]
     if used:
         week += ["---", "", "# Reference breakdowns", "",
@@ -282,5 +314,5 @@ def plan_exports(project_id, data):
     return {
         "week": {"filename": f"week-of-{first}.md", "markdown": "\n".join(week).rstrip() + "\n"},
         "posts": {p["slot"]: {"filename": f"{p['date']}-{_slug(p.get('title'))}.md",
-                              "markdown": post_markdown(p, rates, sources, refs, cards=cards)} for p in posts},
+                              "markdown": post_markdown(p, by_kind, sources, refs, cards=cards)} for p in posts},
     }

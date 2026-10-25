@@ -45,6 +45,33 @@ The bottom bar shows which one is in use.
 8 pages deep (about 96 reels), whatever their size, with the same 5× test; their outliers show "found via @handle". The
 odds' base rates still only use creators inside the follower range, so one huge account can't skew them.
 
+## Carousels and TikTok slideshows
+
+Turn on **Instagram carousels** and **TikTok slideshows** under a project's post types (Settings, or New research). They
+are researched the same way as reels: search, size check, scan, the same 5× outlier test, doubled-down templates, a
+teardown, a madlib and plans.
+
+- **Instagram carousels.** Instagram has no carousel search, so carousels come from the same creators the reel and account
+  searches find: each creator's posts feed (`/v2/instagram/user/posts`, 12 posts a page, 1 credit, default 2 pages; 8
+  for accounts you study). Reels on those pages are saved too. Instagram shows **no views** for carousels, so a carousel's
+  views are estimated from its likes at the niche's own likes-per-view rate (the median of its reels, 1.7–2.5% across
+  six niches; 1.92% until a project has 100 reels). Its ratio is marked ≈ everywhere, and its odds use carousel base
+  rates estimated the same way. Carousels mostly reach followers, so treat a carousel's ratio as a ranking, not a count.
+- **TikTok slideshows.** TikTok's keyword search returns videos only; its **Top** search (`/v1/tiktok/search/top`)
+  returns photo slideshows too, with real play counts and the author's follower count, so no profile lookup is needed.
+  Each keyword runs `tiktok_search_pages` pages (about 30 results, 1 credit each); then each slideshow creator's feed
+  (`/v3/tiktok/profile/videos`, `tiktok_pages` pages) is scanned for more slideshows and doubled-down templates. Only
+  slideshows are kept, not TikTok videos. TikTok accounts are stored as `tt:<handle>` so they never mix with an
+  Instagram account of the same name; the app shows them as @handle with a TikTok badge.
+- **Teardown, slide by slide.** Every slide is saved (`slide_NN.jpg`, up to 20). Slide 1 is the hook: its largest text
+  is the written hook and its image the visual hook. The AI fills the card from the slides (plus a **carousel type**:
+  tutorial, do vs don't, tips, storytelling, transformation, problem/solution, list or types), describes each slide in
+  SEALCaM with its text measured, and makes a madlib of the slides' text, one line per slide. The post's sound (a
+  TikTok song, or an Instagram carousel's music) is recorded; nothing is transcribed.
+- **Plans.** A post built from a slide teardown is a slide post of the same kind: its cover slide, then each slide's
+  text (filled from the source's madlib), image and design, a SEALCaM slide list that recreates the reference slides,
+  the caption and the sound. The plan form can plan one post type only.
+
 ## Teardown (annotation)
 
 Select an outlier and press **Tear down** (about 2 credits). The app fetches the post details and transcript, downloads the video,
@@ -223,3 +250,10 @@ so keep the deployment private, for example with Vercel's Deployment Protection.
 - `/v1/instagram/post?trim=true` returns the media at the top level (`xdt_shortcode_media`), not under `data`.
 - The credit balance endpoint answers `{"creditCount": N}`.
 - Transcripts over 120 s are rejected with HTTP 400 (not charged) unless `allow_long_transcription=true`.
+- `/v2/instagram/user/posts` mixes reels (`media_type` 2, with `play_count`), carousels (`media_type` 8,
+  `carousel_media[].image_versions2`) and photos. Carousels carry `like_count` but no view count; slide alt text is only
+  "Photo by …", so slide text has to be read from the images. Pages continue with `next_max_id`.
+- `/v1/tiktok/search/top` items have `content_type` (`multi_photo` for a slideshow), `images` (a list of links),
+  `statistics.play_count`, `collect_count` (saves) and `author.follower_count`. Profile feeds put the slides under
+  `image_post_info.images[].display_image.url_list`. TikTok slide links expire after a few weeks; the teardown fetches
+  fresh ones (`/v2/tiktok/video`, 1 credit) when a download fails.

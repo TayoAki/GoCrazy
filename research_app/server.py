@@ -16,7 +16,7 @@ from starlette.background import BackgroundTask
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import annotate, backup, brief, config, db, doubledown, llm, madlibs, media, pipeline, planner, teardown
+from . import annotate, backup, brief, config, db, doubledown, llm, madlibs, media, pipeline, planner, reach, teardown
 from .config import DATA, DEFAULT_SETTINGS, MEDIA
 from .scrapecreators import ScrapeCreators, ScrapeError
 
@@ -89,6 +89,7 @@ class PlanIn(BaseModel):
     followers: int | None = None
     start_date: str | None = None
     posts: int = 7
+    kinds: list[str] | None = None   # reel, carousel, slideshow; None plans from every teardown
 
 
 def clean_keywords(keywords):
@@ -256,20 +257,23 @@ def list_outliers(project_id: int, status: str = "active", sort: str = "ratio"):
              "all": "1=1"}.get(status, "o.status <> 'dismissed'")
     with db.connect() as conn:
         rows = conn.execute(f"""
-            SELECT o.shortcode, o.ratio, o.keyword, o.status, o.basis, r.url, r.username, r.views, r.likes, r.comments, r.taken_at,
-                   r.caption, r.duration, c.followers, c.full_name, c.is_verified, t.status AS teardown_status, t.data AS teardown
+            SELECT o.shortcode, o.ratio, o.keyword, o.status, o.basis, o.measure, r.url, r.username, r.views, r.likes, r.comments,
+                   r.taken_at, r.caption, r.duration, r.platform, r.kind, r.saves, r.shares, r.slides,
+                   c.followers, c.full_name, c.is_verified, t.status AS teardown_status, t.data AS teardown
             FROM outliers o JOIN reels r ON r.shortcode = o.shortcode LEFT JOIN creators c ON c.username = r.username
             LEFT JOIN teardowns t ON t.shortcode = o.shortcode
             WHERE o.project_id=? AND {where} ORDER BY {order}""", (project_id,)).fetchall()
     items = []
     for r in rows:
-        item = {k: r[k] for k in r.keys() if k != "teardown"}
+        item = {k: r[k] for k in r.keys() if k not in ("teardown", "slides")}
+        item["handle"] = db.handle(r["username"])
+        item["slide_count"] = len(json.loads(r["slides"])) if r["slides"] else None
         item["cover"] = cover_url(r["shortcode"])
         if r["teardown"]:
             data = json.loads(r["teardown"])
             f = data["fields"]
             value = lambda k: (f.get(k) or {}).get("value")
-            item["td"] = {k: value(k) for k in ("verbal_hook", "written_hook", "hook_pattern", "angle", "video_type", "format",
+            item["td"] = {k: value(k) for k in ("verbal_hook", "written_hook", "hook_pattern", "angle", "video_type", "format", "carousel_type",
                                                  "delivery", "complexity", "cta_mechanic", "is_series", "content_type", "funnel")}
             item["td"]["review"] = sum(1 for v in f.values() if v.get("source") == "needs_review")
             item["td"]["ai"] = sum(1 for v in f.values() if v.get("source") == "ai")
@@ -293,12 +297,17 @@ def list_creators(project_id: int):
         rows = conn.execute("""SELECT pc.username, pc.keywords, pc.status, c.followers, c.full_name, c.is_verified
                                FROM project_creators pc LEFT JOIN creators c ON c.username = pc.username
                                WHERE pc.project_id=?""", (project_id,)).fetchall()
+        lpv = reach.likes_per_view(conn, project_id)
         out = []
         for r in rows:
-            views = [v[0] for v in conn.execute("SELECT views FROM reels WHERE username=? AND views IS NOT NULL", (r["username"],))]
+            posts = conn.execute("SELECT kind, views, likes FROM reels WHERE username=?", (r["username"],)).fetchall()
+            views = [v for v in (reach.views(p, lpv) for p in posts) if v]
             outliers = conn.execute("SELECT COUNT(*), MAX(ratio) FROM outliers WHERE project_id=? AND shortcode IN "
                                     "(SELECT shortcode FROM reels WHERE username=?)", (project_id, r["username"])).fetchone()
-            out.append({"username": r["username"], "full_name": r["full_name"], "followers": r["followers"],
+            out.append({"username": r["username"], "handle": db.handle(r["username"]),
+                        "platform": "tiktok" if r["username"].startswith("tt:") else "instagram",
+                        "kinds": dict(Counter(p["kind"] for p in posts)),
+                        "full_name": r["full_name"], "followers": r["followers"],
                         "is_verified": bool(r["is_verified"]), "status": r["status"], "keywords": json.loads(r["keywords"]),
                         "reels": len(views), "median_views": int(statistics.median(views)) if views else None,
                         "outliers": outliers[0], "best_ratio": outliers[1]})
@@ -314,16 +323,19 @@ def doubled_down(project_id: int):
         accounts = doubledown.project_accounts(conn, project_id)
         for a in accounts:
             a["study"] = a["username"] in study
+            a["handle"] = db.handle(a["username"])
             for t in a["templates"]:
                 examples = []
                 for sc in t["examples"]:
-                    r = conn.execute("""SELECT r.shortcode, r.url, r.views, r.caption, r.taken_at, o.status AS outlier_status,
-                                               td.status AS teardown_status FROM reels r
+                    r = conn.execute("""SELECT r.shortcode, r.url, r.views, r.likes, r.kind, r.caption, r.taken_at,
+                                               o.status AS outlier_status, td.status AS teardown_status FROM reels r
                                         LEFT JOIN outliers o ON o.shortcode = r.shortcode AND o.project_id = ?
                                         LEFT JOIN teardowns td ON td.shortcode = r.shortcode WHERE r.shortcode = ?""",
                                      (project_id, sc)).fetchone()
-                    examples.append({**dict(r), "title": doubledown.title(r["caption"]), "cover": cover_url(sc),
-                                     "ratio": round(r["views"] / a["followers"], 1)})
+                    views = reach.views(r, a["lpv"])
+                    examples.append({**dict(r), "views": views, "estimated": r["kind"] == "carousel",
+                                     "title": doubledown.title(r["caption"]), "cover": cover_url(sc),
+                                     "ratio": round(views / a["followers"], 1)})
                 t["examples"] = examples
     return accounts
 
@@ -337,14 +349,16 @@ def add_template_reel(project_id: int, body: TemplateIn):
     """Add a doubled-down template's example reel to the project's outliers so it can be torn down and planned from."""
     with db.connect() as conn:
         get_project(conn, project_id)
-        reel = conn.execute("""SELECT r.shortcode, r.views, r.caption, c.username, c.followers FROM reels r
+        reel = conn.execute("""SELECT r.shortcode, r.kind, r.views, r.likes, r.caption, c.username, c.followers FROM reels r
                                JOIN creators c ON c.username = r.username WHERE r.shortcode = ?""", (body.shortcode,)).fetchone()
-        if not reel or not reel["views"] or not reel["followers"]:
+        views = reach.views(reel, reach.likes_per_view(conn, project_id)) if reel else None
+        if not views or not reel["followers"]:
             raise HTTPException(404, "Unknown reel")
-        phrase = next((p for p in doubledown.phrases(reel["caption"])), None)
-        conn.execute("""INSERT INTO outliers (project_id, shortcode, ratio, keyword, basis, created_at) VALUES (?,?,?,?, 'template', ?)
+        conn.execute("""INSERT INTO outliers (project_id, shortcode, ratio, keyword, basis, measure, created_at)
+                        VALUES (?,?,?,?, 'template', ?, ?)
                         ON CONFLICT(project_id, shortcode) DO UPDATE SET status = CASE WHEN status = 'dismissed' THEN 'new' ELSE status END""",
-                     (project_id, body.shortcode, round(reel["views"] / reel["followers"], 1), f"@{reel['username']} template", db.now()))
+                     (project_id, body.shortcode, round(views / reel["followers"], 1), f"{db.who(reel['username'])} template",
+                      "likes" if reel["kind"] == "carousel" else "views", db.now()))
     media.download_covers({body.shortcode})
     return {"ok": True}
 
@@ -354,7 +368,8 @@ def patterns(project_id: int):
     with db.connect() as conn:
         rows = conn.execute("""SELECT t.data FROM teardowns t JOIN outliers o ON o.shortcode = t.shortcode
                                WHERE o.project_id=? AND o.status <> 'dismissed' AND t.status='done'""", (project_id,)).fetchall()
-    counters = {k: Counter() for k in ("hook_pattern", "format", "video_type", "complexity", "cta_mechanic", "angle", "delivery")}
+    counters = {k: Counter() for k in ("hook_pattern", "format", "carousel_type", "video_type", "complexity", "cta_mechanic",
+                                       "angle", "delivery")}
     series = 0
     for row in rows:
         fields = json.loads(row["data"])["fields"]
@@ -444,8 +459,9 @@ def create_plan(project_id: int, body: PlanIn):
     with db.connect() as conn:
         settings = db.project_settings(get_project(conn, project_id))
     try:
+        kinds = [k for k in body.kinds or [] if k in planner.KIND_NAMES] or None
         plan_id = planner.start(project_id, body.about[:4000], body.followers, body.start_date,
-                                max(1, min(7, body.posts)), settings["ai_model"])
+                                max(1, min(7, body.posts)), settings["ai_model"], kinds)
     except RuntimeError as e:
         raise HTTPException(409, str(e))
     return {"plan_id": plan_id}
@@ -518,7 +534,11 @@ async def restore_backup(request: Request, upload: str, part: int = 0, parts: in
 
 @app.get("/api/projects/{project_id}/rates")
 def rates(project_id: int):
-    return planner.base_rates(project_id)
+    """Reel base rates, plus every post kind the project researches under by_kind."""
+    with db.connect() as conn:
+        kinds = reach.enabled_kinds(db.project_settings(get_project(conn, project_id)))
+    by_kind = {k: planner.base_rates(project_id, k) for k in dict.fromkeys(["reel", *kinds])}
+    return {**by_kind["reel"], "by_kind": by_kind}
 
 
 @app.get("/api/events")
@@ -534,7 +554,8 @@ def export(project_id: int):
     """Saved outliers with their teardowns, in the shape the templatizing step (playbook Phase 4) reads."""
     with db.connect() as conn:
         project = project_dict(conn, get_project(conn, project_id))
-        rows = conn.execute("""SELECT o.shortcode, o.ratio, o.keyword, r.url, r.username, r.views, r.taken_at, c.followers, t.data
+        rows = conn.execute("""SELECT o.shortcode, o.ratio, o.keyword, o.measure, r.url, r.username, r.kind, r.views, r.likes,
+                                      r.taken_at, c.followers, t.data
                                FROM outliers o JOIN reels r ON r.shortcode = o.shortcode
                                LEFT JOIN creators c ON c.username = r.username LEFT JOIN teardowns t ON t.shortcode = o.shortcode
                                WHERE o.project_id=? AND o.status='saved' ORDER BY o.ratio DESC""", (project_id,)).fetchall()
@@ -542,8 +563,9 @@ def export(project_id: int):
     for i, r in enumerate(rows, 1):
         td = json.loads(r["data"]) if r["data"] else None
         outliers.append({
-            "id": f"O{i:03d}", "url": r["url"], "creator_handle": "@" + r["username"], "views": r["views"],
-            "creator_followers": r["followers"], "outlier_ratio": r["ratio"], "posted_date": (r["taken_at"] or "")[:10],
+            "id": f"O{i:03d}", "url": r["url"], "creator_handle": db.who(r["username"]), "post_kind": r["kind"],
+            "views": r["views"], "likes": r["likes"], "creator_followers": r["followers"], "outlier_ratio": r["ratio"],
+            "ratio_estimated_from_likes": r["measure"] == "likes", "posted_date": (r["taken_at"] or "")[:10],
             "found_via_keyword": r["keyword"],
             "teardown": {k: v["value"] for k, v in td["fields"].items()} if td else None,
             "transcript": td["transcript"]["text"] if td and td.get("transcript") else None,

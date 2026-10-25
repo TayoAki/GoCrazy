@@ -62,8 +62,38 @@ Reply with ONLY a JSON object with exactly these keys:
 - format_evidence: which frames show it, e.g. "overview 3-9: two copies of the creator side by side".
 - notes: anything a human reviewer should double-check."""
 
+SLIDES_SYSTEM = """You analyze one viral slide post (an Instagram carousel or a TikTok photo slideshow) so its structure can be
+reused as a template. You get every slide in order (slide 1 is the cover, so it is the hook), the caption, the post's
+sound, stats, and some automatic pre-annotations (treat those as hints, not truth).
+
+Rules:
+- Describe what is actually there. Never invent text you cannot read; use null instead.
+- For every enum field, use exactly one of the allowed values given below.
+- Be concise: one sentence for descriptions.
+
+Allowed values:
+carousel_type: tutorial (a step-by-step process, framework or acronym), do_dont (what to do vs not to do for a dream
+  result), tip_hack (one-off tips or hacks), storytelling (a story told one line and one matching image per slide),
+  transformation (a before and after, then how), problem_solution (a problem and its solution, over and over),
+  list (each slide is a new point from a list), types (several types of one thing).
+""" + SYSTEM[SYSTEM.index("hook_pattern: is_it_possible"):SYSTEM.index("complexity: easy")] + """complexity: easy (one slide shape repeats 3+ times with only nouns/numbers changing) | complex (anything else).
+""" + SYSTEM[SYSTEM.index("cta_type: follow"):SYSTEM.index("audio: original_voice")] + """Beat labels for structure_pattern: """ + ", ".join(BEATS) + """. One beat per slide, in order; write repeats as STEP×3 and join
+  with " → ".
+
+Reply with ONLY a JSON object with exactly these keys:
+{"topic": str, "carousel_type": str, "written_hook": str|null, "visual_hook": str, "hook_pattern": str, "angle": str,
+ "video_type": str, "delivery": str, "story_type": str|null, "is_series": bool, "series_type": str|null,
+ "episode_marker": str|null, "content_type": str, "funnel": str, "complexity": str, "structure_pattern": str,
+ "value_summary": str, "value_measurable": bool, "cta_type": str, "cta_mechanic": str, "cta_keyword": str|null,
+ "cta_text": str|null, "captions": str, "notes": str}
+- written_hook: the largest text on slide 1, copied exactly (null if none).
+- visual_hook: what slide 1 shows.
+- cta: read the last slides as well as the caption.
+- captions: the slides' text style, e.g. "white sans on a black box, centred, 2-4 lines per slide".
+- notes: anything a human reviewer should double-check."""
+
 ENUM_FIELDS = {"hook_pattern", "angle", "video_type", "delivery", "story_type", "series_type", "content_type", "funnel",
-               "complexity", "cta_type", "cta_mechanic", "format", "audio"}
+               "complexity", "cta_type", "cta_mechanic", "format", "audio", "carousel_type"}
 TEXT_FIELDS = {"topic", "written_hook", "visual_hook", "episode_marker", "structure_pattern", "value_summary",
                "cta_keyword", "cta_text", "captions"}
 # Values read straight from data are only filled by the AI when they are empty.
@@ -97,8 +127,29 @@ def _audio_facts(music):
             "transcript may be song lyrics; set has_speech=false unless it clearly reads like someone talking")
 
 
+def is_slides(data):
+    return data.get("kind") in ("carousel", "slideshow")
+
+
+def _sound(data):
+    music = data.get("music") or {}
+    return f'"{music["song_name"]}" by {music.get("artist_name") or "unknown"}' if music.get("song_name") else "none"
+
+
+def _slides_parts(data, label="SLIDE"):
+    folder = MEDIA / data["shortcode"]
+    parts = []
+    for sc in data.get("scenes") or []:
+        names = [url.rsplit("/", 1)[-1] for url in sc.get("frames") or []]
+        parts.append(("text", f"{label} {sc['i']}" + (" (a video slide: its cover image)" if sc.get("video") else "")))
+        parts += [("image", str(folder / n)) for n in names if (folder / n).exists()]
+    return parts
+
+
 def analyze(data, model):
     """Call the model and return (parsed_json, usage). Raises on HTTP or parse errors."""
+    if is_slides(data):
+        return _analyze_slides(data, model)
     fields = data["fields"]
     hints = {k: fields[k]["value"] for k in ("verbal_hook", "hook_pattern", "video_type", "is_series", "series_type",
                                               "episode_marker", "complexity", "cta_type", "cta_mechanic", "cta_keyword",
@@ -123,6 +174,21 @@ def analyze(data, model):
                       "Set visual_hook only if the transcript makes it obvious, otherwise null.)"))
 
     result, cost = llm.ask_json(SYSTEM, parts, model, 2000, 0.2)
+    return result, {"cost": cost}
+
+
+def _analyze_slides(data, model):
+    fields = data["fields"]
+    hints = {k: fields[k]["value"] for k in ("hook_pattern", "video_type", "is_series", "series_type", "episode_marker",
+                                              "cta_type", "cta_mechanic", "cta_keyword") if k in fields}
+    stats = fields["stats"]["value"]
+    what = "TikTok photo slideshow" if data["kind"] == "slideshow" else "Instagram carousel"
+    text = (f"{what} by {data['username'].replace('tt:', '@')} · {stats.get('slides')} slides · "
+            f"{'estimated ' if stats.get('views_estimated') else ''}views {stats.get('views')} · followers {stats.get('followers')} · "
+            f"ratio {stats.get('ratio')}× · likes {stats.get('likes')} · saves {stats.get('saves')}\n\n"
+            f"SOUND: {_sound(data)}\n\nCAPTION:\n{(data.get('caption') or '')[:2000]}\n\n"
+            f"AUTOMATIC PRE-ANNOTATIONS (hints):\n{json.dumps(hints)}\n\nSLIDES, in order:")
+    result, cost = llm.ask_json(SLIDES_SYSTEM, [("text", text)] + _slides_parts(data), model, 2000, 0.2)
     return result, {"cost": cost}
 
 
@@ -215,6 +281,22 @@ Reply with ONLY a JSON object: {"scenes": [{"i": int, "beat": str, "on_screen_te
 
 SEALCAM_KEYS = ["S", "E", "A", "L", "Ca", "M"]
 
+SLIDES_SCENES_SYSTEM = """You break a viral slide post (an Instagram carousel or a TikTok photo slideshow) down slide by slide so a
+creator can reproduce its look. You get every slide in order, as an image. Each slide counts as a scene.
+
+""" + SEALCAM + """
+
+Rules:
+- One entry per slide, in order, with the slide's number as "i". Describe only what the slide shows. Don't guess at
+  things you can't see.
+- Each field is one or two dense sentences in the terms above. Be explicit: a photographer or designer should be able to
+  recreate the slide from it. A: for a still, the pose, gesture or implied motion, and any layout device (arrows,
+  numbering, split frames, before/after halves). SEALCaM is visual only: no sound or music in any field.
+- Ca: name the capture. When it plainly reads as a phone photo, write "smartphone" first, then the closest equivalent.
+  For designed slides write "graphic design" (say what kind, e.g. "Canva-style text template"), for screenshots
+  "screen capture", and skip the lens.
+""" + SCENES_SYSTEM[SCENES_SYSTEM.index("- on_screen_text:"):]
+
 
 def spoken_in(transcript, start, end):
     """Words spoken between start and end, spreading each transcript segment's words evenly over its time."""
@@ -231,6 +313,11 @@ def breakdown(data, model):
     scenes = data.get("scenes") or []
     if not scenes:
         raise RuntimeError("No scenes to break down: the video couldn't be analyzed")
+    if is_slides(data):
+        parts = [("text", f"Creator: {data['username'].replace('tt:', '@')} · {len(scenes)} slides · SOUND: {_sound(data)}\n\n"
+                          f"CAPTION:\n{(data.get('caption') or '')[:1000]}")] + _slides_parts(data)
+        result, cost = llm.ask_json(SLIDES_SCENES_SYSTEM, parts, model, 16000, 0.2)
+        return result.get("scenes") or [], {"cost": cost}
     folder = MEDIA / data["shortcode"]
     parts = [("text", f"Creator: @{data['username']} · {len(scenes)} scenes · "
               f"AUDIO FACTS FROM INSTAGRAM: {_audio_facts(data.get('music'))}\n\nCAPTION:\n{(data.get('caption') or '')[:1000]}")]
@@ -286,7 +373,11 @@ def madlib(data, model):
     f = {k: v.get("value") for k, v in data["fields"].items()}
     scenes = "\n".join(f"SCENE {sc['i']} [{sc.get('beat') or '?'}] said: {sc.get('said') or '(nothing)'} | on screen: "
                        f"{sc.get('on_screen_text') or '(none)'}" for sc in data.get("scenes") or [])
-    text = (f"BEATS: {f.get('structure_pattern') or 'unknown'}\n"
+    slides = (f"POST: {'a TikTok photo slideshow' if data['kind'] == 'slideshow' else 'an Instagram carousel'} of "
+              f"{len(data.get('scenes') or [])} slides. Nothing is spoken: each SCENE below is one slide, in order. Set "
+              "\"spoken\" to [] and template the text slide by slide in \"on_screen\" (one entry per slide; join the text "
+              "blocks that show together on a slide with \" / \").\n") if is_slides(data) else ""
+    text = (slides + f"BEATS: {f.get('structure_pattern') or 'unknown'}\n"
             f"VERBAL HOOK: {f.get('verbal_hook') or '(none)'}\nWRITTEN HOOK: {f.get('written_hook') or '(none)'}\n"
             f"VISUAL HOOK: {f.get('visual_hook') or '(none)'}\n\nTRANSCRIPT:\n{_transcript_text(data.get('transcript'))[:6000]}\n\n"
             f"SCENES (beat, words spoken, on-screen text):\n{scenes[:6000] or '(no scenes)'}\n\n"
