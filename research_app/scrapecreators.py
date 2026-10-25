@@ -1,5 +1,6 @@
 """Thin ScrapeCreators client. Response shapes were checked against live calls, not just the docs."""
 
+import re
 import threading
 import time
 from datetime import datetime, timezone
@@ -154,15 +155,21 @@ def reel_from_post_item(item):
     return {**reel_from_user_item(item), "url": f"https://www.instagram.com/reel/{item.get('code')}/"}
 
 
+def _readable(urls):
+    """The first link in a format Pillow can open: TikTok often lists a HEIC copy first and a JPEG or WebP one after it."""
+    return next((u for u in urls if not re.search(r"\.heic(\?|$)", u)), None)
+
+
 def _tiktok_images(item):
     """Slide links from either shape: search results carry a plain list, profile feeds carry image_post_info."""
     if item.get("images"):
         return [{"url": u, "video": False} for u in item["images"] if isinstance(u, str)]
     out = []
     for img in (item.get("image_post_info") or {}).get("images") or []:
-        urls = (img.get("display_image") or {}).get("url_list") or []
-        if urls:
-            out.append({"url": urls[0], "video": False})
+        url = _readable((img.get("display_image") or {}).get("url_list") or []) or \
+            _readable((img.get("thumbnail") or {}).get("url_list") or [])
+        if url:
+            out.append({"url": url, "video": False})
     return out
 
 
