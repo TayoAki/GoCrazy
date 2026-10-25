@@ -5,6 +5,7 @@ import subprocess
 from pathlib import Path
 
 import requests
+from PIL import Image
 
 from . import db
 from .config import MEDIA
@@ -35,6 +36,22 @@ def download(url, dest):
         return False
 
 
+def save_cover(url, shortcode):
+    """Download a cover and keep it only if it opens as an image, saved as JPEG (TikTok can serve HEIC, which browsers
+    and Pillow can't show)."""
+    dest = media_dir(shortcode) / "cover.jpg"
+    if not download(url, dest):
+        return False
+    try:
+        im = Image.open(dest)
+        if im.format != "JPEG":
+            im.convert("RGB").save(dest, "JPEG", quality=85)
+        return True
+    except OSError:
+        dest.unlink(missing_ok=True)
+        return False
+
+
 def download_covers(shortcodes):
     """Covers for reels that aren't outliers (e.g. a doubled-down account's template examples)."""
     if not shortcodes:
@@ -44,7 +61,7 @@ def download_covers(shortcodes):
                             f"({','.join('?' * len(shortcodes))})", list(shortcodes)).fetchall()
     for row in rows:
         if not cover_path(row["shortcode"]).exists():
-            download(row["thumb_url"], media_dir(row["shortcode"]) / "cover.jpg")
+            save_cover(row["thumb_url"], row["shortcode"])
 
 
 def download_missing_covers(project_id):
@@ -53,7 +70,7 @@ def download_missing_covers(project_id):
                                WHERE o.project_id=? AND r.thumb_url IS NOT NULL""", (project_id,)).fetchall()
     for row in rows:
         if not cover_path(row["shortcode"]).exists():
-            download(row["thumb_url"], media_dir(row["shortcode"]) / "cover.jpg")
+            save_cover(row["thumb_url"], row["shortcode"])
 
 
 def analyze_video(video_url, shortcode, duration=None):

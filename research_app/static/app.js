@@ -748,7 +748,8 @@ const madlibLine = (tpl) => tpl ? `<div class="madlib">${esc(tpl).replace(/\{\{(
 function shotRef(ref) {
   const sc = String(ref).split(/\s+/)[0];
   const o = outlier(sc);
-  return o ? `<button class="linkish xs" data-open="${esc(sc)}">borrows from ${fills(ref)}</button>` : `<span class="xs faint">borrows from ${fills(ref)}</span>`;
+  const text = fills(isSlides(o?.kind) ? String(ref).replace(" scene ", " slide ") : ref);  // a slide post's scenes are its slides
+  return o ? `<button class="linkish xs" data-open="${esc(sc)}">borrows from ${text}</button>` : `<span class="xs faint">borrows from ${text}</span>`;
 }
 
 function planDay(p, i, rates, planId) {
@@ -976,7 +977,7 @@ function teardownInspector() {
       `<span><span class="prov ${k}"></span>${l}${counts[k] ? `<span class="faint">· ${counts[k]}</span>` : ""}</span>`).join("")}</div></div>` : ""}
     ${data?.ai ? `<div class="insp-sec"><h3>AI reviewer note</h3><p class="ai-note">${esc(data.ai.notes || "No notes.")}</p>
       <p class="xs faint">${esc((data.ai.model || "").split("/").pop())}${data.ai.cost != null ? ` · $${Number(data.ai.cost).toFixed(3)}` : ""}${data.credits_used != null ? ` · ${data.credits_used} ScrapeCreators credits` : ""}</p></div>` : ""}
-    <div class="insp-sec"><h3>Niche base rates</h3>${ratesPanel(S.rates)}</div>`;
+    <div class="insp-sec"><h3>Niche base rates</h3>${ratesPanel(S.rates?.by_kind?.[o.kind || "reel"] || S.rates)}</div>`;
 }
 
 function planInspector(d) {

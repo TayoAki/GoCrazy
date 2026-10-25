@@ -255,7 +255,7 @@ def build(shortcode, project_id):
         notes.append("ffmpeg isn't installed, so no frames or cut count.")
     thumb = post.get("thumbnail_src") or reel["thumb_url"]
     if thumb and not media.cover_path(shortcode).exists():
-        media.download(thumb, media.media_dir(shortcode) / "cover.jpg")
+        media.save_cover(thumb, shortcode)
 
     cuts = video.get("cuts")
     avg_shot = round(duration / (cuts + 1), 1) if cuts is not None and duration else None

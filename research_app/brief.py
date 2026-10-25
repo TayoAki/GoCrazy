@@ -241,7 +241,8 @@ def post_markdown(post, rates, sources, refs=None, level=1, cards=None):
                 out.append(f"- **Check the text:** {'; '.join(shot['text_check'])}")
             out += _sealcam(shot, t)
             if shot.get("reference"):
-                out.append(f"- **Borrowed from:** {t(shot['reference'])}")
+                ref = shot["reference"].replace(" scene ", " slide ") if slides else shot["reference"]
+                out.append(f"- **Borrowed from:** {t(ref)}")
             if shot.get("kept"):
                 out.append(f"- **Kept from the reference:** {t(shot['kept'])}")
             if shot.get("changed"):
