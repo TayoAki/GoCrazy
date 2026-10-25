@@ -8,10 +8,14 @@ rewrites all three, while the different items of a list stay separate variables.
 """
 
 import re
+import time
+
+import regex  # like re, but a match can be given a time limit
 
 SLOT = re.compile(r"\{\{([A-Z0-9_]+)(?::[A-Z_]+)?\}\}")
 REPEAT = re.compile(r"\[REPEAT[^\]]*\](.*?)\[/REPEAT\]", re.S)
 PUNCT = ",;:.!?…–—-"
+ALIGN_SECONDS = 1.0  # time limit for aligning one line
 
 
 def _frame(text, first, last, end_ok):
@@ -56,16 +60,35 @@ def align(template, text):
     if not template or not text:
         return None
     pieces = REPEAT.split(template)  # outside, inner, outside, ...
-    regex, plan = "", []
+    regex_text, plan = "", []
     for i, piece in enumerate(pieces):
         if i % 2:
-            regex += r"(\S.*?)"
+            regex_text += r"(\S.*?)"
             plan.append(("repeat", piece))
         else:
             r, names = _pattern(piece, end_ok=i == len(pieces) - 1)  # only the template's true end may drop its punctuation
-            regex += r
+            regex_text += r
             plan += [("slot", n) for n in names]
-    match = re.fullmatch(regex, text.strip(), re.I | re.S)
+    # Lazy blanks between frame words can backtrack for minutes on a line that almost fits, and re holds the whole
+    # server while it does; so every match on a line shares a time limit, and a line that runs out stays unaligned.
+    deadline = time.monotonic() + ALIGN_SECONDS
+    try:
+        return _align(text, regex_text, plan, deadline)
+    except TimeoutError:
+        return None
+
+
+def _match(pattern, text, deadline, find=False):
+    left = deadline - time.monotonic()
+    if left <= 0:
+        raise TimeoutError
+    if find:
+        return list(regex.finditer(pattern, text, regex.I | regex.S, timeout=left))
+    return regex.fullmatch(pattern, text, regex.I | regex.S, timeout=left)
+
+
+def _align(text, regex_text, plan, deadline):
+    match = _match(regex_text, text.strip(), deadline)
     if not match:
         return None
     uses, count = [], 1
@@ -73,24 +96,33 @@ def align(template, text):
         if kind == "slot":
             uses.append((item, _clean(value)))
             continue
+        # A separator after a repeat's last word (" / ") joins it to the next one; the joints below cover it. A leading
+        # bullet stays: it marks where each repeat starts.
+        item = re.sub(r"\s*[/|]+\s*$", "", item)
         inner, names = _pattern(item)
-        found = list(re.finditer(inner, value.strip(), re.I | re.S))
+        found = _match(inner, value.strip(), deadline, find=True)
         if not found or not names:
             return None
         if re.search(r"\w", SLOT.sub("", item)):
             # Frame words mark where each repeat starts, so match the repeats back to back, trying the most first so one
             # repeat can't swallow two. (Without frame words this would try every split, so those keep the scan below.)
-            # Repeats meet at punctuation or a line break, else at a space; never mid-word.
-            joints = (rf"(?:\s*[{PUNCT}]+\s*|\s*\n\s*|(?<=[\n{PUNCT}])\s*)", rf"(?:\s*[{PUNCT}]+\s*|\s+|(?<=[\s{PUNCT}]))")
+            # Repeats meet at punctuation, a slash or a line break; only short lines may meet at a bare space, since
+            # that joint can backtrack for minutes on a long one.
+            # Punctuation only joins repeats where it touches a space or a line break, so PUSH-UPS stays one word.
+            sep = f"[/|•{PUNCT}]"
+            joints = [rf"(?:\s+{sep}+\s*|\s*{sep}+\s+|\s*\n\s*|(?<={sep}\s)\s*|(?<=\s{sep})\s*|(?<=\n))"]
+            if len(value) <= 160:
+                joints.append(rf"(?:\s+{sep}+\s*|\s*{sep}+\s+|\s+|(?<=\s))")
             m = next((m for count in range(len(found), 0, -1) for joint in joints
-                      if (m := re.fullmatch(joint.join([inner] * count), value.strip(), re.I | re.S))), None)
+                      if (m := _match(joint.join([inner] * count), value.strip(), deadline))), None)
             if not m:
                 return None
             count = len(m.groups()) // len(names)
             uses += [(n, _clean(v)) for n, v in zip(names * count, m.groups())]
             continue
         # Blanks only: each repeat runs to a line break, punctuation, a slash or the end, so its last blank can't stop short.
-        found = list(re.finditer(r"[\s/|•]*" + inner + rf"(?:(?<=[\n/|•{PUNCT}])|(?<=[\n/|•{PUNCT}]\s)|(?=\s*$|\s*\n|\s*[/|•{PUNCT}]))", value.strip(), re.I | re.S))
+        found = _match(r"[\s/|•]*" + inner + rf"(?:(?<=[\n/|•{PUNCT}])|(?<=[\n/|•{PUNCT}]\s)|(?=\s*$|\s*\n|\s*[/|•{PUNCT}]))",
+                       value.strip(), deadline, find=True)
         if not found or sum(len(m.group(0)) for m in found) < len(value.strip()) * 0.8:
             return None
         count = len(found)

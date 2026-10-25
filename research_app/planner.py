@@ -116,8 +116,9 @@ outline, reusing the structure of the proven outliers it is based on.
    slot's rule. Expand a REPEAT block into that many filled lines (one more or one fewer is fine). Fill the source's
    written and visual hook madlibs the same way. Rule 2 still applies inside a slot. Put the madlib line you filled in
    "template".
-8. sound: the kind of sound its sources use (a named song only as an example of the kind). On an Instagram carousel,
-   add a trending sound: without one it can't be shown in the Reels tab.
+8. POST KIND says where it is posted: a TikTok photo slideshow goes on TikTok, an Instagram carousel on Instagram.
+   sound: the kind of sound its sources use (a named song only as an example of the kind), picked from that
+   platform's sounds. Only on an Instagram carousel: add a trending sound, or it can't be shown in the Reels tab.
 
 Reply with ONLY a JSON object:
 {{"title": "the outline's title, or a new one if what the post teaches had to change",
@@ -685,7 +686,8 @@ def _generate(project_id, about, followers, start_date, posts, model, teardowns)
         sources = [teardown_by_id[s] for s in post.get("source_outliers") or [] if s in teardown_by_id] or same[:3]
         templates = {s: madlibs[s] for s in post.get("source_outliers") or [] if s in madlibs}
         d, c = _chat_json(model, (SLIDES_DETAIL_SYSTEM if slides else DETAIL_SYSTEM).format(beats=", ".join(BEATS), **vocab),
-                          context + f"SLOT: {json.dumps(slot)}\nOUTLINE: {json.dumps(post, ensure_ascii=False)}\n\n"
+                          context + (f"POST KIND: {KIND_NAMES[post['post_kind']]}\n" if slides else "")
+                          + f"SLOT: {json.dumps(slot)}\nOUTLINE: {json.dumps(post, ensure_ascii=False)}\n\n"
                           f"SOURCE TEARDOWNS:\n{json.dumps(sources, ensure_ascii=False)}\n\n"
                           f"SOURCE MADLIBS (by teardown id):\n{json.dumps(templates, ensure_ascii=False) if templates else '(none)'}"
                           + (f"\n\nYOUR LAST VERSION REUSED THE SOURCE'S OWN CONTENT ({', '.join(avoid)}). Keep the template, "

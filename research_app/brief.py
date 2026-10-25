@@ -15,6 +15,10 @@ SEALCAM_NAMES = {"S": "Subject", "E": "Environment", "A": "Action", "L": "Lighti
 KIND_LABEL = {"reel": "reel", "carousel": "Instagram carousel", "slideshow": "TikTok slideshow"}
 
 
+def _first_up(text):
+    return text[:1].upper() + text[1:]
+
+
 def _label(value):
     return str(value).replace("_", " ") if value not in (None, "", "none", "unknown") else ""
 
@@ -42,7 +46,8 @@ def _sources(shortcodes):
                                 JOIN reels r ON r.shortcode = o.shortcode
                                 WHERE o.shortcode IN ({",".join("?" * len(shortcodes))}) GROUP BY o.shortcode""",
                              list(shortcodes)).fetchall()
-    return {r["shortcode"]: {**dict(r), "who": db.who(r["username"])} for r in rows}
+    # "who" names the account in free text (with "(TikTok)"); "handle" goes next to a kind that already says TikTok.
+    return {r["shortcode"]: {**dict(r), "who": db.who(r["username"]), "handle": "@" + db.handle(r["username"])} for r in rows}
 
 
 def _cards(shortcodes):
@@ -143,7 +148,7 @@ def post_markdown(post, rates, sources, refs=None, level=1, cards=None):
     odds = post.get("odds") or {}
     slides = post.get("post_kind") in ("carousel", "slideshow")
     meta = [_day(post["date"]), post["funnel"].upper(), _label(post.get("content_type")).capitalize(),
-            KIND_LABEL[post["post_kind"]].capitalize() + f" of {len(post.get('beats') or [])} slides" if slides
+            _first_up(KIND_LABEL[post["post_kind"]]) + f" of {len(post.get('beats') or [])} slides" if slides
             else _label(post.get("format")).capitalize(), f"about {post['length_s']} s" if post.get("length_s") else ""]
     style = ", ".join(x for x in (_label(post.get("complexity")), _label(post.get("delivery")),
                                   f"{_label(post.get('story_type'))} story" if _label(post.get("story_type")) else "") if x)
@@ -170,7 +175,7 @@ def post_markdown(post, rates, sources, refs=None, level=1, cards=None):
     borrowed = [sources[s] for s in post.get("source_outliers") or [] if s in sources]
     if borrowed:
         out.append("- **Borrows its structure from:**")
-        out += [f"  - {s['who']}'s {KIND_LABEL.get(s.get('kind') or 'reel')}, {s['ratio']}× their followers"
+        out += [f"  - {s['handle']}'s {KIND_LABEL.get(s.get('kind') or 'reel')}, {s['ratio']}× their followers"
                 + (" (estimated from likes)" if s.get("measure") == "likes" else "") + f": {s['url']}" for s in borrowed]
     out += [f"- **Risk:** {t(post.get('risk'))}"]
     if post.get("reuse"):
@@ -187,7 +192,7 @@ def post_markdown(post, rates, sources, refs=None, level=1, cards=None):
     madlib_from = sources.get(post.get("madlib_source") or "")
     out += [f"{h}# Script", ""]
     if madlib_from:
-        out += [f"The {'slides fill' if slides else 'script fills'} the madlib of {madlib_from['who']}'s "
+        out += [f"The {'slides fill' if slides else 'script fills'} the madlib of {madlib_from['handle']}'s "
                 f"{KIND_LABEL.get(madlib_from.get('kind') or 'reel')} ({madlib_from['url']}): each line keeps its "
                 "frame words and fills its slots with this creator's content.", ""]
     out += [f"{h}## {'Cover (slide 1)' if slides else 'Hook (first 3 seconds)'}", ""]
@@ -254,7 +259,7 @@ def post_markdown(post, rates, sources, refs=None, level=1, cards=None):
 def reference_markdown(src, ref, level=1, card=None):
     h = "#" * level
     slides = src.get("kind") in ("carousel", "slideshow")
-    out = [f"{h}# Reference breakdown: {src['who']}'s {KIND_LABEL.get(src.get('kind') or 'reel')} ({src['ratio']}×)", "", src["url"], ""]
+    out = [f"{h}# Reference breakdown: {src['handle']}'s {KIND_LABEL.get(src.get('kind') or 'reel')} ({src['ratio']}×)", "", src["url"], ""]
     if card:
         out += _card_markdown(src, card) + [""]
         if card.get("madlib"):
@@ -299,7 +304,7 @@ def plan_exports(project_id, data):
     for p in posts:
         title = _handles(p.get("title"), sources).replace("|", "/")
         kind = p.get("post_kind") or "reel"
-        shape = KIND_LABEL[kind].capitalize() if kind != "reel" else _label(p.get("format")).capitalize()
+        shape = _first_up(KIND_LABEL[kind]) if kind != "reel" else _label(p.get("format")).capitalize()
         week.append(f"| {_day(p['date'])} | {title} | {p['funnel'].upper()} | {shape} | "
                     f"{_pct((p.get('odds') or {}).get('p5'))} ({(p.get('odds') or {}).get('band', 'n/a')}) |")
     week.append("")

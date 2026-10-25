@@ -3,3 +3,4 @@ fastapi>=0.110
 uvicorn>=0.29
 pillow>=10
 numpy>=1.26
+regex>=2024.4
