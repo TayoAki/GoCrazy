@@ -112,6 +112,56 @@ and videos as `yt-<video id>`, so neither ever mixes with an Instagram or TikTok
   each section with what it covers, the device that carries the viewer into the next one and its length. It gets no
   shot list.
 
+## Clips from a long video (with OpenShorts)
+
+The **Clips** tab cuts one long YouTube video into Shorts, reels and TikToks, and writes each clip's hook from what
+wins in the niche. Paste a link (any long video in the project is in the list, and a long video's teardown has a
+**Plan clips** button). Use your own videos, or ones whose creator agreed to clipping.
+
+- **The moments** come from what YouTube shows about the video: the timed transcript, the whole "most replayed" graph
+  (100 slices), the chapters and the top comments. It costs 1–3 credits: the details every time (for the graph), plus
+  the transcript and comments when the video has no teardown yet.
+- **The hooks** come from the niche's short-form winners in this project and in every project sharing at least half its
+  keywords, so a YouTube project borrows from the same niche's Instagram and TikTok project. That means up to 18 reels
+  and Shorts (their first spoken line) and up to 10 slideshows and carousels (their cover text). Each group is ranked on
+  its own, because slide posts beat their creators' follower counts by far more than videos do.
+- **Who posts** is the "About you" of the newest week plan (from this project or a sibling), unless you write one.
+- **Each clip** gets:
+  - its segments: one, or a cold open (its strongest line first, then the setup played through)
+  - the spoken hook and the last line, quoted from the transcript
+  - the on-screen hook (at most 8 words), modelled on a named winner
+  - a Shorts title and a TikTok/Instagram caption
+  - why it should work (how much more it was replayed than the video's average, the comments)
+  - what to check before posting (claims, missing context, sponsor or competitor mentions, permission)
+
+  The cuts are aligned in code. Each word gets a time, spread evenly across its caption line, since auto-captions
+  overlap. The first segment starts on the first word of the quoted hook and the last ends on the last word of the
+  quoted closing line. The edges between segments widen to whole sentences. Clips that overlap a better one, or run
+  outside 15–90 s, are dropped.
+- **The brief** (Copy brief / Download .md) lists every clip: the cut, the hook said and on screen, the winner it is
+  modelled on, the closing line, the title, the caption, why, what to check, and everything said.
+- **Rendering** goes through [OpenShorts](https://github.com/mutonby/openshorts): vertical crop with face tracking,
+  burned captions and the hook text. Each clip is one OpenShorts job over a stretch of at least a minute around it,
+  because that's OpenShorts' shortest range. Only that stretch is transcribed, reframed and, on the hosted service,
+  billed.
+  - A YouTube link is sent with the stretch as `source_start`/`source_end`.
+  - A video file on this computer (the render panel's optional path) is cut to the stretch with ffmpeg and uploaded.
+  - When the job is done, its clip is re-cut to the plan's exact segments (`/api/clip/rerender`, in seconds from the
+    stretch's start, snapped to OpenShorts' own word timings) and the hook goes on (`/api/hook`). The file is saved to
+    `data/media/clips/<plan id>/` and plays in the tab.
+  - OpenShorts asks you to confirm you own the video or have the rights to clip it, so the render panel has a box to
+    tick. It is sent only when ticked.
+
+### Setting up OpenShorts
+
+| Setup | What to put in `.env` | Notes |
+|---|---|---|
+| Self-hosted (free) | nothing, or `OPENSHORTS_API_URL` | Run OpenShorts with Docker (its README). This app talks to its dashboard on `http://localhost:5175`, which passes the API through. OpenShorts' backend also takes port 8000, this app's default, so start this app on another port while it runs: `PORT=8001 python -m research_app`. OpenShorts needs a Gemini key: its own `GEMINI_API_KEY`, or this app's (sent as `X-Gemini-Key`), or a local LLM (`LLM_BASE_URL`) |
+| Hosted ([openshorts.app](https://www.openshorts.app/)) | `OPENSHORTS_API_KEY=osk_...` | Uses `https://api.openshorts.app`; paid plans from $12/month, free plan 20 minutes a month with a watermark |
+
+The bottom of the Clips tab says whether OpenShorts answers. YouTube sometimes blocks downloads from servers. If a link
+fails, render from the video file instead.
+
 ## Teardown (annotation)
 
 Select an outlier and press **Tear down** (about 2 credits). The app fetches the post details and transcript, downloads the video,

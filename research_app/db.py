@@ -91,6 +91,17 @@ CREATE TABLE IF NOT EXISTS plans (
     error TEXT,
     created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS clip_plans (
+    id INTEGER PRIMARY KEY,
+    project_id INTEGER NOT NULL,
+    shortcode TEXT NOT NULL,         -- the long YouTube video being clipped ("yt-<video id>")
+    status TEXT NOT NULL,            -- running | done | failed
+    input TEXT,                      -- JSON: clips, about, model
+    data TEXT,                       -- JSON: the clips, each with its cut, hook (said and on screen), title and caption
+    render TEXT,                     -- JSON: the OpenShorts render (status, job, one file per clip)
+    error TEXT,
+    created_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS events (
     id INTEGER PRIMARY KEY,
     project_id INTEGER,
@@ -134,6 +145,9 @@ def init():
         conn.execute("UPDATE runs SET status='stopped', message='Server restarted', finished_at=? WHERE status='running'", (now(),))
         conn.execute("UPDATE teardowns SET status='failed', error='Server restarted' WHERE status='running'")
         conn.execute("UPDATE plans SET status='failed', error='Server restarted' WHERE status='running'")
+        conn.execute("UPDATE clip_plans SET status='failed', error='Server restarted' WHERE status='running'")
+        conn.execute("""UPDATE clip_plans SET render=json_set(render, '$.status', 'failed', '$.error', 'Server restarted')
+                        WHERE json_extract(render, '$.status') = 'running'""")
 
 
 def log(project_id, level, message):

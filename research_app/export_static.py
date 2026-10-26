@@ -34,6 +34,7 @@ def collect(project_ids=None, transcripts=True):
         routes[base + "/rates"] = server.rates(p["id"])
         routes[base + "/plans"] = [{**plan, "input": {k: v for k, v in plan["input"].items() if k != "about"}}
                                    for plan in server.list_plans(p["id"]) if plan["status"] == "done"]
+        routes[base + "/clips"] = [{**c, "render": None} for c in server.list_clip_plans(p["id"]) if c["status"] == "done"]
         for o in outliers:
             td = server.read_teardown(o["shortcode"])
             if td.get("data") and not transcripts:

@@ -61,5 +61,17 @@ def openrouter_key():
     return os.environ.get("OPENROUTER_API_KEY")
 
 
+def openshorts_url():
+    """The OpenShorts server that renders clip plans: OPENSHORTS_API_URL, else the hosted API when OPENSHORTS_API_KEY is
+    set, else a self-hosted one on this machine. Its Docker setup serves the dashboard on port 5175, which passes /api and
+    /videos through to the backend (the backend's own port, 8000, is this app's default too)."""
+    url = os.environ.get("OPENSHORTS_API_URL") or ("https://api.openshorts.app" if openshorts_key() else "http://localhost:5175")
+    return url.rstrip("/")
+
+
+def openshorts_key():
+    return os.environ.get("OPENSHORTS_API_KEY")
+
+
 def has_ffmpeg():
     return shutil.which("ffmpeg") is not None

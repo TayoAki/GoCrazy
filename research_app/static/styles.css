@@ -469,3 +469,27 @@ mark.fill { background: var(--warn-soft); color: var(--warn); border-radius: 4px
 .filmstrip.yt img { aspect-ratio: 16 / 9; }
 @media (max-width: 640px) { .filmstrip.yt { grid-template-columns: repeat(3, minmax(0, 1fr)); } .filmstrip.yt figure:first-child { grid-column: 1 / -1; } }
 fieldset.field { border: 0; padding: 0; margin: 0; display: grid; gap: 6px; }
+/* Clips: a long video cut into Shorts, reels and TikToks. The 9:16 player (or its placeholder) beside each clip's brief. */
+.cliplist { list-style: none; padding: 0; margin: 0 0 var(--s4); display: flex; flex-direction: column; gap: var(--s5); }
+.clipcard { display: grid; grid-template-columns: 160px minmax(0, 1fr); gap: var(--s4); align-items: start; }
+.clipcard + .clipcard { border-top: 1px solid var(--line); padding-top: var(--s5); }
+.clip-media video, .clip-ph { width: 160px; aspect-ratio: 9 / 16; border-radius: var(--r-sm); background: #111; display: block; }
+.clip-ph { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; background: var(--chip); color: var(--muted); }
+.clip-ph b { font-size: var(--t-lg); color: var(--text); font-variant-numeric: tabular-nums; }
+.clip-ph span { font-size: var(--t-xs); }
+.clip-body { min-width: 0; display: flex; flex-direction: column; gap: var(--s2); }
+.clip-h { font-size: var(--t-lg); line-height: 1.35; }
+dl.rows.clip-rows { grid-template-columns: 120px minmax(0, 1fr); gap: var(--s2) var(--s4); }
+dl.rows.clip-rows dd { font-size: var(--t-md); }
+dl.rows dd.pre { white-space: pre-line; }
+details.said summary { cursor: pointer; color: var(--muted); font-size: var(--t-sm); }
+details.said .say { margin: var(--s2) 0 0; line-height: 1.55; }
+.render-panel { display: flex; flex-direction: column; gap: var(--s2); padding: var(--s3); margin-bottom: var(--s5); border: 1px solid var(--line); border-radius: var(--r-md); background: var(--panel-2); }
+.render-panel input[name=file] { flex: 1; min-width: 220px; }
+.bad-text { color: var(--bad); }
+button.link { background: none; border: 0; padding: 0; color: var(--accent); cursor: pointer; font: inherit; text-decoration: underline; }
+@media (max-width: 640px) {
+  .clipcard { grid-template-columns: 1fr; }
+  .clip-media video, .clip-ph { width: min(220px, 100%); }
+  dl.rows.clip-rows { grid-template-columns: 1fr; gap: 2px; }
+}

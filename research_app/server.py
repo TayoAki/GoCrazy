@@ -16,7 +16,7 @@ from starlette.background import BackgroundTask
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import annotate, backup, brief, config, db, doubledown, llm, madlibs, media, pipeline, planner, reach, teardown
+from . import annotate, backup, brief, clips, config, db, doubledown, llm, madlibs, media, openshorts, pipeline, planner, reach, teardown
 from .config import DATA, DEFAULT_SETTINGS, MEDIA
 from .scrapecreators import ScrapeCreators, ScrapeError
 
@@ -92,6 +92,17 @@ class PlanIn(BaseModel):
     kinds: list[str] | None = None   # reel, carousel, slideshow; None plans from every teardown
 
 
+class ClipsIn(BaseModel):
+    source: str                      # a YouTube link (or "yt-" shortcode) of a long video
+    clips: int = 5
+    about: str | None = None         # who posts the clips; empty = the newest week plan's "about"
+
+
+class RenderIn(BaseModel):
+    file: str | None = None          # a video file on this computer to render from instead of the YouTube link
+    acknowledged: bool = False       # the person confirms they own the video or have the rights to clip it
+
+
 def clean_keywords(keywords):
     seen = []
     for kw in keywords:
@@ -157,7 +168,7 @@ def status(refresh: bool = False):
             _balance["error"] = str(e)
         _balance["checked"] = time.time()
     return {"scrapecreators": bool(key), "openrouter": llm.available(), "ai_provider": llm.provider(), "ffmpeg": config.has_ffmpeg(),
-            "credits": _balance["value"], "credits_error": _balance["error"]}
+            "credits": _balance["value"], "credits_error": _balance["error"], "openshorts": openshorts.reachable(refresh)}
 
 
 @app.get("/api/vocab")
@@ -210,7 +221,7 @@ def update_project(project_id: int, body: ProjectPatch):
 def delete_project(project_id: int):
     with db.connect() as conn:
         get_project(conn, project_id)
-        for table in ("outliers", "project_creators", "runs", "events"):
+        for table in ("outliers", "project_creators", "runs", "events", "clip_plans"):
             conn.execute(f"DELETE FROM {table} WHERE project_id=?", (project_id,))
         conn.execute("DELETE FROM projects WHERE id=?", (project_id,))
     return {"ok": True}
@@ -525,6 +536,67 @@ def export_plan(plan_id: int, post: int | None = None):
 def delete_plan(plan_id: int):
     with db.connect() as conn:
         conn.execute("DELETE FROM plans WHERE id=?", (plan_id,))
+    return {"ok": True}
+
+
+@app.post("/api/projects/{project_id}/clips")
+def create_clip_plan(project_id: int, body: ClipsIn):
+    if not llm.available():
+        raise HTTPException(400, "No AI provider: install Claude Code or set OPENROUTER_API_KEY")
+    with db.connect() as conn:
+        settings = db.project_settings(get_project(conn, project_id))
+    try:
+        plan_id = clips.start(project_id, body.source, max(1, min(8, body.clips)), (body.about or "")[:4000], settings["ai_model"])
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except RuntimeError as e:
+        raise HTTPException(409, str(e))
+    return {"plan_id": plan_id}
+
+
+def clip_plan_dict(row):
+    data = json.loads(row["data"]) if row["data"] else None
+    return {"id": row["id"], "shortcode": row["shortcode"], "status": row["status"], "error": row["error"],
+            "created_at": row["created_at"], "clips_asked": json.loads(row["input"] or "{}").get("clips"),
+            "data": data, "markdown": clips.markdown(data) if row["status"] == "done" and data else None,
+            "render": json.loads(row["render"]) if row["render"] else None}
+
+
+@app.get("/api/projects/{project_id}/clips")
+def list_clip_plans(project_id: int):
+    with db.connect() as conn:
+        rows = conn.execute("SELECT * FROM clip_plans WHERE project_id=? ORDER BY id DESC", (project_id,)).fetchall()
+    return [clip_plan_dict(r) for r in rows]
+
+
+@app.get("/api/clips/{plan_id}/brief.md")
+def clip_brief(plan_id: int):
+    with db.connect() as conn:
+        row = conn.execute("SELECT * FROM clip_plans WHERE id=? AND status='done'", (plan_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "No finished clip plan with that id")
+    return Response(clips.markdown(json.loads(row["data"])), media_type="text/markdown; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="clips-{row["shortcode"][3:]}.md"'})
+
+
+@app.post("/api/clips/{plan_id}/render")
+def render_clips(plan_id: int, body: RenderIn):
+    if DEPLOYED and (body.file or "").strip():
+        raise HTTPException(400, "Rendering from a file only works when the app runs on your own computer")
+    try:
+        openshorts.start(plan_id, (body.file or "").strip() or None, body.acknowledged)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except RuntimeError as e:
+        raise HTTPException(409, str(e))
+    return {"ok": True}
+
+
+@app.delete("/api/clips/{plan_id}")
+def delete_clip_plan(plan_id: int):
+    with db.connect() as conn:
+        conn.execute("DELETE FROM clip_plans WHERE id=?", (plan_id,))
+    shutil.rmtree(MEDIA / "clips" / str(plan_id), ignore_errors=True)
     return {"ok": True}
 
 

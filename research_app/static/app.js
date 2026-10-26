@@ -135,13 +135,14 @@ const ICON = {
 // ---------- state ----------
 const S = {
   view: "research", tab: "outliers", projects: [], projectId: null, outliers: [], creators: [], doubled: [], replicated: [], patterns: null, rates: null,
-  runs: [], plans: [], planId: null, planForm: false, open: null, td: null, editing: null, edits: {}, mlEdits: {},
+  runs: [], plans: [], planId: null, planForm: false, clips: [], clipPlanId: null, clipForm: false, clipSource: "", open: null, td: null, editing: null, edits: {}, mlEdits: {},
   status: {}, vocab: null, sort: "ratio", filter: "active", kind: "all", events: [], seenEvents: 0,
 };
 const project = () => S.projects.find((p) => p.id === S.projectId);
 const activeRun = () => (S.runs[0] && S.runs[0].status === "running" ? S.runs[0] : null);
 const outlier = (sc) => S.outliers.find((o) => o.shortcode === sc);
 const currentPlan = () => S.plans.find((p) => p.id === S.planId) || S.plans[0];
+const currentClips = () => S.clips.find((c) => c.id === S.clipPlanId) || S.clips[0];
 
 // ---------- data ----------
 async function loadProjects() {
@@ -150,16 +151,17 @@ async function loadProjects() {
 }
 
 async function loadProjectData() {
-  if (!S.projectId) Object.assign(S, { outliers: [], creators: [], doubled: [], replicated: [], patterns: null, runs: [], plans: [], rates: null });
+  if (!S.projectId) Object.assign(S, { outliers: [], creators: [], doubled: [], replicated: [], patterns: null, runs: [], plans: [], clips: [], rates: null });
   if (!S.projectId) return;
   const id = S.projectId;
-  const [outliers, creators, patterns, runs, plans, rates, doubled, replicated] = await Promise.all([
+  const [outliers, creators, patterns, runs, plans, rates, doubled, replicated, clips] = await Promise.all([
     api(`/api/projects/${id}/outliers?status=${S.filter}&sort=${S.sort}`), api(`/api/projects/${id}/creators`),
     api(`/api/projects/${id}/patterns`), api(`/api/projects/${id}/runs`), api(`/api/projects/${id}/plans`),
     api(`/api/projects/${id}/rates`), api(`/api/projects/${id}/doubled-down`), api(`/api/projects/${id}/replicated`),
+    api(`/api/projects/${id}/clips`),
   ]);
   if (id !== S.projectId) return;
-  Object.assign(S, { outliers, creators, patterns, runs, plans, rates, doubled, replicated });
+  Object.assign(S, { outliers, creators, patterns, runs, plans, rates, doubled, replicated, clips });
 }
 
 async function loadStatus(refresh = false) {
@@ -238,6 +240,30 @@ function pollPlan() {
   }, 3000);
 }
 
+// A clip plan being written, or rendered by OpenShorts.
+const clipsBusy = () => S.clips.some((c) => c.status === "running" || c.render?.status === "running");
+
+function pollClips() {
+  clearTimeout(pollClips.timer);
+  if (!clipsBusy() || STATIC) return;
+  const id = S.projectId;
+  pollClips.timer = setTimeout(async () => {
+    const before = new Map(S.clips.map((c) => [c.id, `${c.status}/${c.render?.status}`]));
+    const fresh = await api(`/api/projects/${id}/clips`).catch(() => null);
+    if (fresh && id === S.projectId) {
+      S.clips = fresh;
+      for (const c of fresh) {
+        const was = before.get(c.id);
+        if (was?.startsWith("running/") && c.status !== "running") toast(c.status === "done" ? "Clips planned" : "Clip plan failed: " + c.error);
+        else if (was?.endsWith("/running") && c.render?.status !== "running") toast(c.render?.status === "done" ? "Clips rendered" : "Render failed: " + (c.render?.error || ""));
+      }
+      // Not while a form is open or being typed in: a redraw would wipe it.
+      if (S.tab === "clips" && !S.open && !S.clipForm && !document.activeElement?.closest("form")) renderMain();
+    }
+    pollClips();
+  }, 3000);
+}
+
 if (!STATIC) {
   setInterval(async () => {
     S.events = await api("/api/events?limit=60").catch(() => S.events);
@@ -260,11 +286,11 @@ async function setView(view) {
 
 async function selectProject(id) {
   S.projectId = id;
-  S.open = null; S.td = null; S.editing = null; S.planId = null; S.planForm = false;
+  S.open = null; S.td = null; S.editing = null; S.planId = null; S.planForm = false; S.clipPlanId = null; S.clipForm = false;
   if (!["settings", "bank"].includes(S.view)) S.view = "research";
   await loadProjectData();
   render();
-  pollRun(); pollPlan();
+  pollRun(); pollPlan(); pollClips();
 }
 
 async function startRun() {
@@ -366,8 +392,9 @@ function renderMain() {
   }
   const done = S.outliers.filter((o) => o.teardown_status === "done").length;
   const tabs = [["outliers", "Outliers", p.outliers - p.dismissed], ["doubled", "Doubled down", S.replicated.length + S.doubled.length], ["creators", "Creators", S.creators.length],
-    ["teardowns", "Teardowns", done], ["plan", "Plan", S.plans.filter((x) => x.status === "done").length]];
-  const body = S.open ? teardownPage() : { doubled: doubledTab, creators: creatorsTab, teardowns: teardownsTab, plan: planTab }[S.tab]?.() ?? outliersTab(p);
+    ["teardowns", "Teardowns", done], ["plan", "Plan", S.plans.filter((x) => x.status === "done").length],
+    ["clips", "Clips", S.clips.filter((x) => x.status === "done").reduce((n, x) => n + x.data.clips.length, 0)]];
+  const body = S.open ? teardownPage() : { doubled: doubledTab, creators: creatorsTab, teardowns: teardownsTab, plan: planTab, clips: clipsTab }[S.tab]?.() ?? outliersTab(p);
   main.innerHTML = `<div class="tabs" role="tablist">${tabs.map(([k, l, n]) =>
     `<button class="tab" role="tab" data-tab="${k}" aria-selected="${S.tab === k}">${l}<span class="tab-n">${n}</span></button>`).join("")}</div>
     <div class="content">${body}</div>`;
@@ -594,6 +621,7 @@ function teardownPage() {
       <div class="td-actions">
         ${STATIC ? "" : `<button class="btn ${o.status === "saved" ? "on" : ""}" data-action="${o.status === "saved" ? "unsave" : "save"}">${ICON.star} ${o.status === "saved" ? "Saved" : "Save to bank"}</button>
         <button class="btn quiet" data-action="dismiss">${ICON.x} Dismiss</button>`}
+        ${o.kind === "video" && !STATIC ? `<button class="btn" data-action="clip-this">${ICON.cut} Plan clips</button>` : ""}
         <a class="btn quiet" href="${esc(o.url)}" target="_blank" rel="noopener">${ICON.ext} Open ${thing}</a>
       </div>
     </div>`;
@@ -785,6 +813,94 @@ function planForm(teardowns) {
         ${S.plans.length ? `<button class="btn quiet" type="button" data-action="cancel-plan">Cancel</button>` : ""}
         <span class="small muted">About $1 of AI · 3–4 minutes, shot lists included</span></div>
     </form>`;
+}
+
+// ---------- clips: a long video cut into Shorts, reels and TikToks, each with its hook ----------
+const cutText = (segs) => segs.map((x, i) => `${clock(x.start)}–${clock(x.end)}${i === 0 && segs.length > 1 ? " (cold open)" : ""}`).join(", then ");
+
+function clipsTab() {
+  const plan = currentClips();
+  if (S.clipForm || !plan) return clipForm();
+  const picker = `<div class="toolbar">
+      ${S.clips.length > 1 ? `<select data-control="clip-plan" aria-label="Choose a clip plan">${S.clips.map((x) => `<option value="${x.id}" ${x.id === plan.id ? "selected" : ""}>${esc((x.data?.source.title || x.shortcode).slice(0, 60))} · ${ago(x.created_at)}${x.status === "done" ? "" : " · " + esc(x.status)}</option>`).join("")}</select>` : ""}
+      <span class="spacer"></span>
+      ${plan.status === "done" ? `<button class="btn sm" data-action="copy-clips">${ICON.copy} Copy brief</button>${STATIC ? "" : `<a class="btn sm" href="/api/clips/${plan.id}/brief.md" download>${ICON.download} Download .md</a>`}` : ""}
+      ${STATIC ? "" : `<button class="btn sm quiet" data-action="delete-clips">${ICON.trash} Delete</button><button class="btn sm" data-action="new-clips">${ICON.cut} Clip another video</button>`}</div>`;
+  if (plan.status === "running") return picker + `<div class="page-head"><h1>Planning clips…</h1><p>Reading the transcript, the most-replayed graph and the top comments, then matching each moment to the hooks that win in this niche. About a minute.</p></div>
+    <div class="week" aria-hidden="true">${"<div class='skel block' style='height:120px'></div>".repeat(plan.clips_asked || 5)}</div>`;
+  if (plan.status === "failed") return picker + `<div class="notice">${ICON.alert}<div>Clip planning failed: ${esc(plan.error)}</div></div>
+    ${STATIC ? "" : `<button class="btn primary" data-action="new-clips">${ICON.refresh} Try again</button>`}`;
+  const d = plan.data, src = d.source;
+  return picker + `<div class="page-head"><h1>Clips from “${esc(src.title)}”</h1>
+      <p><a href="${esc(src.url)}" target="_blank" rel="noopener">${who(src)}</a> · ${clock(src.duration)} long${src.views ? " · " + fmt(src.views) + " views" : ""}.
+      ${d.clips.length} clips, best first. Each one opens on its strongest line and ends on its payoff; the hook on screen is modelled on
+      ${d.evidence} short-form winners in this niche. Post only clips of a video you own or have permission to clip.</p></div>
+    ${renderPanel(plan)}
+    <ol class="cliplist">${d.clips.map((c) => clipCard(c, plan)).join("")}</ol>
+    ${d.skipped ? `<p class="small muted"><b>Left out:</b> ${esc(d.skipped)}</p>` : ""}`;
+}
+
+function clipForm() {
+  const longs = S.outliers.filter((o) => o.kind === "video");
+  return `<div class="page-head"><h1>Clip a long video</h1>
+      <p>Picks the moments of a long YouTube video that stand alone as Shorts, reels and TikToks, and writes each clip's hook:
+      the line it opens on, the text on screen, the title and the caption. The moments come from the video's transcript, its
+      most-replayed graph and its comments; the hooks follow the short-form posts that won in this niche. OpenShorts then
+      renders the clips: vertical crop, captions and the hook text.</p></div>
+    <form id="clips-form" class="form">
+      <label class="field"><span>Long YouTube video</span>
+        <input name="source" required placeholder="https://www.youtube.com/watch?v=…" value="${esc(S.clipSource)}" list="clip-sources" autocomplete="off">
+        <datalist id="clip-sources">${longs.map((o) => `<option value="${esc(o.url)}">${esc((o.caption || "").slice(0, 80))}</option>`).join("")}</datalist>
+        <span class="help">Yours, or one whose creator agreed to clipping (a sponsorship or clipping deal). Any long video in this project is in the list.</span></label>
+      <label class="field"><span>Who posts the clips</span>
+        <textarea name="about" rows="3" placeholder="Leave empty to use the “About you” of your newest week plan"></textarea></label>
+      <div class="grid-3"><label class="field"><span>Clips</span><select name="clips">${[5, 3, 4, 6, 8].map((n) => `<option>${n}</option>`).join("")}</select></label></div>
+      <div class="toolbar"><button class="btn primary" type="submit" ${STATIC ? "disabled" : ""}>${ICON.cut} Plan clips</button>
+        ${S.clips.length ? `<button class="btn quiet" type="button" data-action="cancel-clips">Cancel</button>` : ""}
+        <span class="small muted">1–3 ScrapeCreators credits · about a minute</span></div>
+    </form>`;
+}
+
+function renderPanel(plan) {
+  const r = plan.render || {}, os = S.status.openshorts || {};
+  if (STATIC) return "";
+  const state = r.status === "running" ? `<span><span class="sd busy"></span>Rendering with OpenShorts · ${esc(r.message || "")}</span>`
+    : r.status === "failed" ? `<span class="bad-text">Render failed: ${esc(r.error || "")}</span>`
+    : r.status === "done" ? `<span>Rendered ${(r.clips || []).filter((x) => x.file).length} of ${plan.data.clips.length} clips with OpenShorts ${ago(r.updated_at)}</span>`
+    : os.ok ? `<span>OpenShorts is ready at ${esc(os.url)}</span>` : `<span class="muted">OpenShorts isn't reachable at ${esc(os.url || "localhost:8000")}: start it, or set OPENSHORTS_API_URL / OPENSHORTS_API_KEY in .env</span>`;
+  return `<form id="render-form" class="render-panel" data-id="${plan.id}">
+      <div class="small">${state}</div>
+      <div class="toolbar" style="margin:0">
+        <input name="file" placeholder="Optional: a video file on this computer instead of the YouTube link" value="${esc(r.file || "")}">
+        <button class="btn sm ${os.ok ? "primary" : ""}" type="submit" ${r.status === "running" || !os.ok ? "disabled" : ""}>${ICON.play} ${r.status === "done" ? "Render again" : "Render with OpenShorts"}</button></div>
+      <label class="small check"><input type="checkbox" name="acknowledged" required> I own this video, or its creator agreed to have it clipped. OpenShorts records this confirmation.</label>
+    </form>`;
+}
+
+function clipCard(c, plan) {
+  const f = c.follows;
+  const file = (plan.render?.clips || []).find((x) => x.rank === c.rank)?.file;
+  const name = f ? `${esc(f.who.replace(/ \((YouTube|TikTok)\)$/, ""))}’s ${esc(KIND[f.kind] || f.kind)}` : "";
+  const model = f ? (outlier(f.id) ? `<button class="link" data-open="${esc(f.id)}">${name}</button>` : `<a href="${esc(f.url)}" target="_blank" rel="noopener">${name}</a>`)
+    + ` (${f.ratio}× ${esc(f.against)})${f.on_screen ? ` · “${esc(f.on_screen)}”` : f.said ? ` · “${esc(f.said)}”` : ""}` : "";
+  return `<li class="clipcard">
+    <div class="clip-media">${file ? `<video src="${esc(file)}" controls preload="metadata" playsinline></video>`
+      : `<div class="clip-ph"><b>${Math.round(c.length_s)} s</b><span>${c.cold_open ? "cold open" : "one take"}</span></div>`}</div>
+    <div class="clip-body">
+      <div class="clip-h"><b>${c.rank}. ${esc(c.title || c.idea)}</b></div>
+      <div class="chips"><span class="chip">${esc(cutText(c.segments))}</span>${c.replay ? `<span class="chip ${c.replay >= 1.5 ? "good" : ""}">replayed ${c.replay}× the video's average</span>` : ""}${c.hook_pattern ? `<span class="chip info">${esc(label(c.hook_pattern))}</span>` : ""}</div>
+      <dl class="rows clip-rows">
+        <dt>Hook, said</dt><dd class="quote">“${esc(c.spoken_hook)}”</dd>
+        <dt>Hook, on screen</dt><dd><b>${esc(c.on_screen)}</b></dd>
+        ${model ? `<dt>Modelled on</dt><dd>${model}</dd>` : ""}
+        <dt>Ends on</dt><dd>“${esc(c.ends_on)}”</dd>
+        <dt>Shorts title</dt><dd>${esc(c.title)}</dd>
+        <dt>Caption</dt><dd class="pre">${esc(c.caption)}</dd>
+        <dt>Why</dt><dd>${esc(c.why)}</dd>
+        ${c.check || c.problems?.length ? `<dt>Check</dt><dd class="warn-text">${esc([c.check, ...(c.problems || [])].filter(Boolean).join(" "))}</dd>` : ""}
+      </dl>
+      <details class="said"><summary>Everything said in the clip</summary><p class="say">${esc(c.said)}</p></details>
+    </div></li>`;
 }
 
 // A text block's style in one line: the same wording as textstyle.describe() in the brief.
@@ -1086,7 +1202,7 @@ document.addEventListener("click", async (ev) => {
   if (!el) return;
   if (el.dataset.view) return setView(el.dataset.view);
   if (el.dataset.project) return selectProject(Number(el.dataset.project));
-  if (el.dataset.tab) { S.tab = el.dataset.tab; S.open = null; S.planForm = false; render(); return pollPlan(); }
+  if (el.dataset.tab) { S.tab = el.dataset.tab; S.open = null; S.planForm = false; S.clipForm = false; render(); pollClips(); return pollPlan(); }
   if (el.dataset.open) return openTeardown(el.dataset.open);
   if (el.dataset.edit) { S.editing = el.dataset.edit; S.edits = {}; return renderMain(); }
   const actions = {
@@ -1109,6 +1225,16 @@ document.addEventListener("click", async (ev) => {
     "close-teardown": () => { S.open = null; render(); },
     "cancel-edit": () => { S.editing = null; S.edits = {}; renderMain(); },
     "new-plan": () => { S.planForm = true; render(); },
+    "new-clips": () => { S.clipForm = true; render(); },
+    "cancel-clips": () => { S.clipForm = false; render(); },
+    "clip-this": () => { S.clipSource = outlier(S.open)?.url || ""; S.clipForm = true; S.open = null; S.tab = "clips"; render(); },
+    "copy-clips": () => copyText(currentClips()?.markdown, "Clip brief copied"),
+    "delete-clips": async () => {
+      const plan = currentClips();
+      if (!plan || !confirm("Delete this clip plan and its rendered clips?")) return;
+      await api(`/api/clips/${plan.id}`, { method: "DELETE" });
+      S.clipPlanId = null; await loadProjectData(); render();
+    },
     "cancel-plan": () => { S.planForm = false; render(); },
     "delete-plan": async () => {
       const plan = currentPlan();
@@ -1156,6 +1282,7 @@ document.addEventListener("change", async (ev) => {
     return renderMain();
   }
   if (t.dataset.control === "plan") { S.planId = Number(t.value); render(); return pollPlan(); }
+  if (t.dataset.control === "clip-plan") { S.clipPlanId = Number(t.value); return renderMain(); }
   if (t.dataset.control === "kind") { S.kind = t.value; return renderMain(); }
   if (t.dataset.field) S.edits[t.dataset.field] = t.type === "checkbox" ? t.checked : t.value === "" ? null : t.value;
 });
@@ -1224,6 +1351,17 @@ document.addEventListener("submit", async (ev) => {
       S.plans = await api(`/api/projects/${S.projectId}/plans`);
       S.planId = res.plan_id; S.planForm = false;
       render(); pollPlan();
+    } else if (form.id === "clips-form") {
+      const v = Object.fromEntries(new FormData(form));
+      const res = await api(`/api/projects/${S.projectId}/clips`, { method: "POST", body: { source: v.source, clips: Number(v.clips), about: v.about || null } });
+      S.clips = await api(`/api/projects/${S.projectId}/clips`);
+      S.clipPlanId = res.plan_id; S.clipForm = false; S.clipSource = "";
+      render(); pollClips();
+    } else if (form.id === "render-form") {
+      const v = Object.fromEntries(new FormData(form));
+      await api(`/api/clips/${form.dataset.id}/render`, { method: "POST", body: { file: v.file || null, acknowledged: form.acknowledged.checked } });
+      S.clips = await api(`/api/projects/${S.projectId}/clips`);
+      renderMain(); pollClips();
     } else if (form.matches(".edit-form")) {
       await saveSection();
     }
@@ -1251,5 +1389,5 @@ document.addEventListener("keydown", (ev) => {
   S.seenEvents = S.events[0]?.id || 0;
   render();
   loadStatus(false);
-  pollRun(); pollPlan();
+  pollRun(); pollPlan(); pollClips();
 })();
