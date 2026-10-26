@@ -25,14 +25,25 @@ const weekday = (iso) => new Date(iso + "T12:00:00").toLocaleDateString(undefine
 const label = (v) => (v === null || v === undefined || v === "" ? "—" : String(v).replace(/_/g, " "));
 const cap = (s) => (s ? s[0].toUpperCase() + s.slice(1) : s);
 const hue = (s) => [...String(s)].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 360, 7);
-// Post kinds. TikTok accounts are stored as "tt:<handle>" so they never mix with an Instagram namesake.
-const KIND = { reel: "Reel", carousel: "Carousel", slideshow: "TikTok slideshow" };
-const KINDS_PLURAL = { reel: "reels", carousel: "carousels", slideshow: "TikTok slideshows" };
+// Post kinds. TikTok and YouTube accounts are stored as "tt:<handle>" and "yt:<handle>" so they never mix with an
+// Instagram namesake.
+const KIND = { reel: "Reel", carousel: "Carousel", slideshow: "TikTok slideshow", video: "YouTube video", short: "YouTube Short" };
+const KINDS_PLURAL = { reel: "reels", carousel: "carousels", slideshow: "TikTok slideshows", video: "YouTube videos", short: "YouTube Shorts" };
+const ALL_KINDS = ["reel", "carousel", "slideshow", "video", "short"];
 const isSlides = (k) => k === "carousel" || k === "slideshow";
-const who = (x) => "@" + esc(x.handle || String(x.username || "").replace(/^tt:/, ""));
-const profileUrl = (u) => (String(u).startsWith("tt:") ? `https://www.tiktok.com/@${encodeURIComponent(u.slice(3))}` : `https://www.instagram.com/${encodeURIComponent(u)}/`);
-// A carousel's ratio is estimated from its likes (Instagram hides its views), so it shows as ≈.
+const isYouTube = (k) => k === "video" || k === "short";
+const platformOf = (u) => ({ "tt:": "TikTok", "yt:": "YouTube" })[String(u || "").slice(0, 3)] || "";
+const platformChip = (u) => (platformOf(u) ? ` <span class="chip kind">${platformOf(u)}</span>` : "");
+const who = (x) => "@" + esc(x.handle || String(x.username || "").replace(/^(tt|yt):/, ""));
+const profileUrl = (u) => {
+  const s = String(u), h = encodeURIComponent(s.slice(3));
+  return s.startsWith("tt:") ? `https://www.tiktok.com/@${h}` : s.startsWith("yt:") ? `https://www.youtube.com/@${h}` : `https://www.instagram.com/${encodeURIComponent(s)}/`;
+};
+// A carousel's ratio is estimated from its likes (Instagram hides its views), so it shows as ≈. A YouTube video's ratio is
+// against its channel's median video of the same kind, not its subscribers.
 const ratioText = (o) => `${o.measure === "likes" ? "≈" : ""}${o.ratio}×`;
+const audience = (o) => (isYouTube(o.kind) ? "subscribers" : "followers");
+const clock = (s) => { s = Math.round(s || 0); return s >= 3600 ? `${Math.floor(s / 3600)}:${String(Math.floor(s % 3600 / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}` : `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; };
 const kindChip = (o) => (o.kind && o.kind !== "reel" ? `<span class="chip kind">${KIND[o.kind]}${o.slide_count ? " · " + o.slide_count : ""}</span>` : "");
 // Escape, highlight [[placeholders]], and turn outlier ids the planner cites into @handles.
 const fills = (text) => {
@@ -368,15 +379,15 @@ function outliersTab(p) {
   const kinds = [...new Set(S.outliers.map((o) => o.kind || "reel"))];
   const shown = S.outliers.filter((o) => S.kind === "all" || (o.kind || "reel") === S.kind);
   const cards = shown.map((o) => {
-    const hook = o.td?.verbal_hook || o.td?.written_hook;
+    const hook = o.kind === "video" ? o.td?.written_hook || o.td?.verbal_hook : o.td?.verbal_hook || o.td?.written_hook;  // a long video's hook is its title
     return `<button class="card" data-open="${esc(o.shortcode)}" aria-label="Open teardown of ${who(o)}, ${o.ratio} times">
-      <div class="thumb">${o.cover ? `<img src="${esc(o.cover)}" alt="" loading="lazy">` : `<div class="ph">${ICON.image}</div>`}
+      <div class="thumb ${o.kind === "video" ? "wide" : ""}">${o.cover ? `<img src="${esc(o.cover)}" alt="" loading="lazy">` : `<div class="ph">${ICON.image}</div>`}
         <span class="ratio">${ratioText(o)}</span>
         <span class="corner">${kindChip(o)}${o.basis === "template" ? `<span class="chip info">Template</span>` : o.basis === "replicated" ? `<span class="chip info">Copied format</span>` : ""}${o.status === "saved" ? `<span class="chip accent">${ICON.star}Saved</span>` : ""}${o.sponsored ? `<span class="chip warn">Sponsored</span>` : ""}</span>
       </div>
       <div class="body">
         <div class="who">${who(o)}</div>
-        <div class="nums">${o.kind === "carousel" ? `${fmt(o.likes)} likes` : `${fmt(o.views)} views`} · ${fmt(o.followers)} followers · ${ago(o.taken_at)}</div>
+        <div class="nums">${o.kind === "carousel" ? `${fmt(o.likes)} likes` : `${fmt(o.views)} views`} · ${o.measure === "median" ? `channel median ${fmt(o.typical)}` : `${fmt(o.followers)} followers`} · ${ago(o.taken_at)}</div>
         ${o.td ? `<div class="hook ${hook ? "" : "none"}">${esc(hook || "No spoken or on-screen hook")}</div>`
                : `<div class="hook none">${esc((o.caption || "").split("\n")[0] || "Not torn down yet")}</div>`}
         ${o.td ? `<div class="chips">${[o.td.format, o.td.hook_pattern !== "niche_specific" && o.td.hook_pattern].filter(Boolean)
@@ -396,12 +407,12 @@ function outliersTab(p) {
       ${run ? `<button class="btn" data-action="stop">${ICON.stop} Stop</button>` : `<button class="btn primary" data-action="run">${ICON.play} ${last ? "Run again" : "Run research"}</button>`}
     </div>`;
   return `<div class="page-head"><h1>${esc(p.name)}</h1>
-      <p>${p.niche ? esc(p.niche) + ". " : ""}Outliers have ${s.min_ratio}× or more views than their creator's followers, from creators with ${fmt(s.min_followers)}–${fmt(s.max_followers)} followers, posted in the last ${s.max_age_days} days.
-      Researching ${["reels", "carousels", "slideshows"].filter((k) => s[k]).map((k) => ({ reels: "Instagram reels", carousels: "Instagram carousels", slideshows: "TikTok slideshows" })[k]).join(", ") || "nothing: turn a post type on in Settings"}.${s.carousels ? " Instagram hides carousel views, so a carousel's views are estimated from its likes (≈)." : ""}</p></div>
+      <p>${p.niche ? esc(p.niche) + ". " : ""}${s.reels || s.carousels || s.slideshows ? `Outliers have ${s.min_ratio}× or more views than their creator's followers, from creators with ${fmt(s.min_followers)}–${fmt(s.max_followers)} followers, posted in the last ${s.max_age_days} days. ` : ""}${s.youtube_videos || s.youtube_shorts ? `A YouTube outlier has ${s.youtube_min_ratio}× or more its channel's median views (long videos and Shorts measured apart), from channels with ${fmt(s.min_followers)}–${fmt(s.youtube_max_subscribers)} subscribers, posted in the last ${s.max_age_days} days and at least a week ago. ` : ""}
+      Researching ${["reels", "carousels", "slideshows", "youtube_videos", "youtube_shorts"].filter((k) => s[k]).map((k) => ({ reels: "Instagram reels", carousels: "Instagram carousels", slideshows: "TikTok slideshows", youtube_videos: "YouTube videos", youtube_shorts: "YouTube Shorts" })[k]).join(", ") || "nothing: turn a post type on in Settings"}.${s.carousels ? " Instagram hides carousel views, so a carousel's views are estimated from its likes (≈)." : ""}</p></div>
     <div class="toolbar">
       <select data-control="filter" aria-label="Show">${[["active", "Active"], ["saved", "Saved"], ["dismissed", "Dismissed"], ["all", "All"]].map(([v, l]) => `<option value="${v}" ${S.filter === v ? "selected" : ""}>${l}</option>`).join("")}</select>
       <select data-control="sort" aria-label="Sort by">${[["ratio", "Highest ratio"], ["views", "Most views"], ["newest", "Newest"]].map(([v, l]) => `<option value="${v}" ${S.sort === v ? "selected" : ""}>${l}</option>`).join("")}</select>
-      ${kinds.length > 1 || S.kind !== "all" ? `<select data-control="kind" aria-label="Post type">${[["all", "Every post type"], ...["reel", "carousel", "slideshow"].filter((k) => kinds.includes(k) || S.kind === k).map((k) => [k, cap(KINDS_PLURAL[k])])].map(([v, l]) => `<option value="${v}" ${S.kind === v ? "selected" : ""}>${l}</option>`).join("")}</select>` : ""}
+      ${kinds.length > 1 || S.kind !== "all" ? `<select data-control="kind" aria-label="Post type">${[["all", "Every post type"], ...ALL_KINDS.filter((k) => kinds.includes(k) || S.kind === k).map((k) => [k, cap(KINDS_PLURAL[k])])].map(([v, l]) => `<option value="${v}" ${S.kind === v ? "selected" : ""}>${l}</option>`).join("")}</select>` : ""}
       <span class="spacer"></span><span class="small muted">${shown.length} shown · click one for its teardown</span>
     </div>
     ${shown.length ? `<div class="grid">${cards}</div>` : `<p class="muted">${run ? "Outliers appear here as creators are scanned." : "No outliers yet. Run research to find them."}</p>`}
@@ -412,9 +423,9 @@ function doubledTab() {
   const head = `<div class="page-head"><h1>Doubled down</h1><p>Templates that keep working: first the formats several creators copy,
     then the templates one creator keeps reposting. Copying either is safer than copying one lucky post.</p></div>`;
   const copied = (t) => S.replicated.find((r) => r.signature === t.phrase && r.kind === (t.kind || "reel"));
-  const repExample = (e) => `<div class="ex">
+  const repExample = (e, kind) => `<div class="ex">
       ${e.cover ? `<img src="${esc(e.cover)}" alt="" loading="lazy">` : `<div class="ph">${ICON.image}</div>`}
-      <div class="n">${who(e)} · ${e.estimated ? "≈" : ""}${e.ratio < 0.1 ? "<0.1" : e.ratio}× followers</div>
+      <div class="n">${who(e)} · ${e.estimated ? "≈" : ""}${e.ratio < 0.1 ? "<0.1" : e.ratio}× ${isYouTube(kind) ? "subscribers" : "followers"}</div>
       <div class="t" title="${esc(e.title || "")}">${e.lift ? `${e.lift}× their typical post` : "too few posts to compare"}${e.posts > 1 ? ` · ${e.posts} posts` : ""} · ${esc(e.title || "No caption")}</div>
       ${e.outlier_status ? `<button class="btn sm" data-open="${esc(e.shortcode)}">${ICON.cut} ${e.teardown_status === "done" ? "Teardown" : "Open"}</button>`
         : STATIC ? `<a class="btn sm quiet" href="${esc(e.url)}" target="_blank" rel="noopener">${ICON.ext} Open post</a>`
@@ -428,7 +439,7 @@ function doubledTab() {
       <div class="dd-h"><b>“${esc(cap(t.signature))}”</b>${t.kind !== "reel" ? ` <span class="chip kind">${KIND[t.kind]}</span>` : ""}
         <span class="chip good">${t.winners} of ${t.creators} creators win with it</span>
         <span class="small muted">${t.posts} ${KINDS_PLURAL[t.kind]} · typical one ${t.median_lift ? t.median_lift + "× the creator's own typical post" : "beats the follower count"} · ${t.how === "frame" ? "same hook frame" : "same phrase"}</span></div>
-      <div class="tpl-ex">${t.examples.map(repExample).join("")}</div></section>`).join("")}</div>`
+      <div class="tpl-ex">${t.examples.map((e) => repExample(e, t.kind)).join("")}</div></section>`).join("")}</div>`
       : `<p class="muted">No format is copied by 3 or more creators with results yet. Scanning more creators (Max creators in Settings) gives it more to compare.</p>`}`;
   const accountsHead = `<h2 class="section-gap" style="margin-bottom:8px">One creator, one template</h2>
     <p class="small muted" style="margin:0 0 16px">A template is a phrase that keeps coming back in a creator's caption headlines. It counts when it shows up in 4 or more
@@ -436,19 +447,19 @@ function doubledTab() {
   if (!S.doubled.length) return head + replicatedSec + accountsHead + `<p class="muted">None found yet. Run research: every scanned creator, including accounts you name to study and bigger accounts up to ${fmt(project()?.settings?.double_down_max_followers)} followers, is checked for a repeated template.</p>`;
   const example = (e) => `<div class="ex">
       ${e.cover ? `<img src="${esc(e.cover)}" alt="" loading="lazy">` : `<div class="ph">${ICON.image}</div>`}
-      <div class="n">${e.estimated ? "≈" : ""}${fmt(e.views)} views · ${e.estimated ? "≈" : ""}${e.ratio}× followers</div>
+      <div class="n">${e.estimated ? "≈" : ""}${fmt(e.views)} views · ${e.estimated ? "≈" : ""}${e.ratio}× ${isYouTube(e.kind) ? "subscribers" : "followers"}</div>
       <div class="t" title="${esc(e.title)}">${esc(e.title || "No caption")}</div>
       ${e.outlier_status ? `<button class="btn sm" data-open="${esc(e.shortcode)}">${ICON.cut} ${e.teardown_status === "done" ? "Teardown" : "Open"}</button>`
         : STATIC ? `<a class="btn sm quiet" href="${esc(e.url)}" target="_blank" rel="noopener">${ICON.ext} Open post</a>`
         : `<button class="btn sm" data-action="add-template" data-shortcode="${esc(e.shortcode)}">${ICON.cut} Tear down</button>`}
     </div>`;
   return head + replicatedSec + accountsHead + `<div class="dd-list">${S.doubled.map((a) => `<section class="dd">
-      <div class="dd-h"><a href="${profileUrl(a.username)}" target="_blank" rel="noopener">${who(a)}</a>${a.username.startsWith("tt:") ? ` <span class="chip kind">TikTok</span>` : ""}
-        <span class="small muted">${fmt(a.followers)} followers · ${a.reels} posts scanned · typical post ${fmt(a.median_views)} views</span>
+      <div class="dd-h"><a href="${profileUrl(a.username)}" target="_blank" rel="noopener">${who(a)}</a>${platformChip(a.username)}
+        <span class="small muted">${fmt(a.followers)} ${platformOf(a.username) === "YouTube" ? "subscribers" : "followers"} · ${a.reels} posts scanned · typical post ${fmt(a.median_views)} views</span>
         ${a.study ? `<span class="chip accent">Account you named</span>` : ""}</div>
       ${a.templates.map((t) => `<div class="tpl ${t.qualifies ? "" : "minor"}">
         <div class="tpl-h"><b>“${esc(cap(t.phrase))}”</b><span class="chip ${t.qualifies ? "good" : ""}">${t.qualifies ? "Doubled down" : "Also repeats"}</span>${t.kind && t.kind !== "reel" ? `<span class="chip kind">${KIND[t.kind]}</span>` : ""}${copied(t) ? `<span class="chip accent">Copied by ${copied(t).creators} creators</span>` : ""}</div>
-        <div class="small muted">${t.count} of ${t.of} ${KINDS_PLURAL[t.kind || "reel"]} (${pct(t.share, 0)}) · typical one ${t.kind === "carousel" ? "≈" : ""}${fmt(t.median_views)} views, ${t.reach}× followers${t.vs_other_reels ? ` · ${t.vs_other_reels}× their other ${KINDS_PLURAL[t.kind || "reel"]}` : ""}</div>
+        <div class="small muted">${t.count} of ${t.of} ${KINDS_PLURAL[t.kind || "reel"]} (${pct(t.share, 0)}) · typical one ${t.kind === "carousel" ? "≈" : ""}${fmt(t.median_views)} views, ${t.reach}× ${isYouTube(t.kind) ? "subscribers" : "followers"}${t.vs_other_reels ? ` · ${t.vs_other_reels}× their other ${KINDS_PLURAL[t.kind || "reel"]}` : ""}</div>
         <div class="tpl-ex">${t.examples.map(example).join("")}</div></div>`).join("")}
     </section>`).join("")}</div>`;
 }
@@ -457,9 +468,9 @@ function creatorsTab() {
   if (!S.creators.length) return `<p class="muted">Creators found by keyword search appear here.</p>`;
   const st = { scanned: ["good", "Scanned"], found: ["", "Not scanned"], too_big: ["warn", "Too big"], too_small: ["warn", "Too small"], private: ["bad", "Private"], error: ["bad", "Error"] };
   return `<div class="page-head"><h1>Creators</h1><p>Everyone the keyword and account searches surfaced, with why each was or wasn't scanned.</p></div>
-    <div class="tablewrap"><table><thead><tr><th>Creator</th><th class="num">Followers</th><th class="num">Posts scanned</th><th class="num">Median views</th><th class="num">Outliers</th><th class="num">Best</th><th>Doubles down on</th><th>Status</th><th>Found via</th></tr></thead><tbody>
+    <div class="tablewrap"><table><thead><tr><th>Creator</th><th class="num">Followers or subscribers</th><th class="num">Posts scanned</th><th class="num">Median views</th><th class="num">Outliers</th><th class="num">Best</th><th>Doubles down on</th><th>Status</th><th>Found via</th></tr></thead><tbody>
     ${S.creators.map((c) => `<tr>
-      <td><a href="${profileUrl(c.username)}" target="_blank" rel="noopener">${who(c)}</a>${c.platform === "tiktok" ? ` <span class="chip kind">TikTok</span>` : ""}${c.full_name ? `<div class="xs muted">${esc(c.full_name)}</div>` : ""}</td>
+      <td><a href="${profileUrl(c.username)}" target="_blank" rel="noopener">${who(c)}</a>${platformChip(c.username)}${c.full_name ? `<div class="xs muted">${esc(c.full_name)}</div>` : ""}</td>
       <td class="num">${fmt(c.followers)}</td><td class="num">${c.reels || "—"}</td><td class="num">${fmt(c.median_views)}</td>
       <td class="num">${c.outliers || "—"}</td><td class="num">${c.best_ratio ? c.best_ratio + "×" : "—"}</td>
       <td>${(S.doubled.find((d) => d.username === c.username)?.templates || []).filter((t) => t.qualifies).map((t) => `<button class="chip good" data-tab="doubled">${esc(cap(t.phrase))}</button>`).join(" ") || "—"}</td>
@@ -472,11 +483,11 @@ function teardownsTab() {
   const rows = S.outliers.filter((o) => o.teardown_status === "done");
   if (!rows.length) return `<p class="muted">No teardowns yet. Open an outlier and press Tear down.</p>`;
   return `<div class="page-head"><h1>Teardowns</h1><p>Every torn-down outlier side by side. Open one to read or edit its full breakdown.</p></div>
-    <div class="tablewrap"><table><thead><tr><th></th><th>Creator</th><th class="num">Ratio</th><th>Heard in the first 3 s</th><th>Pattern</th><th>Angle</th><th>Format</th><th>Structure</th><th>CTA</th><th>Check</th></tr></thead><tbody>
+    <div class="tablewrap"><table><thead><tr><th></th><th>Creator</th><th class="num">Ratio</th><th>Hook (heard, or a long video's title)</th><th>Pattern</th><th>Angle</th><th>Format</th><th>Structure</th><th>CTA</th><th>Check</th></tr></thead><tbody>
     ${rows.map((o) => `<tr class="click" data-open="${esc(o.shortcode)}">
       <td>${o.cover ? `<img class="mini" src="${esc(o.cover)}" alt="">` : `<div class="mini"></div>`}</td>
       <td>${who(o)} ${kindChip(o)}${o.sponsored ? ` <span class="chip warn">Sponsored</span>` : ""}</td><td class="num">${ratioText(o)}</td>
-      <td class="clip" title="${esc(o.td.verbal_hook || "")}">${esc(o.td.verbal_hook || o.td.written_hook || "—")}</td>
+      <td class="clip" title="${esc((o.kind === "video" ? o.td.written_hook : o.td.verbal_hook) || "")}">${esc((o.kind === "video" ? o.td.written_hook : o.td.verbal_hook || o.td.written_hook) || "—")}</td>
       <td>${esc(label(o.td.hook_pattern))}</td><td>${esc(label(o.td.angle))}</td><td>${esc(isSlides(o.kind) ? label(o.td.carousel_type) : label(o.td.format))}</td>
       <td>${esc(label(o.td.complexity))} ${esc(label(o.td.delivery))}</td><td>${esc(label(o.td.cta_mechanic))}</td>
       <td>${o.td.review ? `<span class="chip bad">${o.td.review} to review</span>` : o.td.ai ? `<span class="chip ai">${o.td.ai} AI</span>` : `<span class="chip good">Reviewed</span>`}</td></tr>`).join("")}
@@ -485,7 +496,8 @@ function teardownsTab() {
 
 // ---------- teardown page ----------
 const SECTIONS = {
-  hook: { title: "Hook: the first 3 seconds", keys: ["verbal_hook", "written_hook", "visual_hook", "hook_pattern"] },
+  hook: { title: "Hook: the first 3 seconds", keys: ["verbal_hook", "written_hook", "title_pattern", "thumbnail_text", "visual_hook", "hook_pattern"] },
+  attention: { title: "How it holds attention", keys: ["intro", "retention", "rewatch", "sponsor", "comments_say"] },
   structure: { title: "Structure", keys: ["structure_pattern", "angle", "video_type", "delivery", "story_type", "complexity"] },
   value: { title: "Value and call to action", keys: ["value_summary", "cta_type", "cta_mechanic", "cta_keyword", "cta_text"] },
   format: { title: "Format and editing", keys: ["format", "audio", "captions"] },
@@ -497,11 +509,16 @@ const FIELD = {
   value_summary: "Takeaway", cta_type: "CTA type", cta_mechanic: "Mechanic", cta_keyword: "Keyword", cta_text: "Closing line",
   format: "Format", audio: "Audio", captions: "Captions", topic: "Topic", content_type: "Content type", funnel: "Funnel",
   post_type: "Post type", carousel_type: "Carousel type", is_series: "Series", series_type: "Series type", episode_marker: "Episode marker",
+  title_pattern: "Title formula", thumbnail_text: "Thumbnail text", intro: "Intro", retention: "Keeps you watching", rewatch: "Rewatched",
+  sponsor: "Sponsor or plug", comments_say: "Comments react to",
 };
+// Labels that change with the post: a long video's written hook is its title, its visual hook its thumbnail.
+let NAMES = {};
 const SOURCE = { api: "From Instagram data", auto: "Read from the data", heuristic: "Pattern match: check it", ai: "AI: check it against the frames",
   needs_review: "Needs review", human: "You set this" };
 const QUOTED = new Set(["verbal_hook", "written_hook", "cta_text"]);
-const LONG = new Set(["verbal_hook", "visual_hook", "value_summary", "cta_text", "structure_pattern"]);
+const LONG = new Set(["verbal_hook", "visual_hook", "value_summary", "cta_text", "structure_pattern", "intro", "retention", "rewatch",
+  "sponsor", "comments_say"]);
 let VOCAB_KEYS = new Set();
 
 function value(f, key) {
@@ -516,7 +533,7 @@ function rows(fields, keys) {
   return `<dl class="rows">${keys.filter((k) => fields[k]).map((k) => {
     const f = fields[k];
     const note = f.note && f.source !== "auto" && f.source !== "api" ? `<span class="note">${esc(f.note)}</span>` : "";
-    return `<dt>${FIELD[k] || k}</dt><dd class="${QUOTED.has(k) ? "quote" : ""}">${value(f, k)}<span class="prov ${esc(f.source)}" title="${esc(SOURCE[f.source] || f.source)}" aria-label="${esc(SOURCE[f.source] || f.source)}"></span>${note}</dd>`;
+    return `<dt>${NAMES[k] || FIELD[k] || k}</dt><dd class="${QUOTED.has(k) ? "quote" : ""}">${value(f, k)}<span class="prov ${esc(f.source)}" title="${esc(SOURCE[f.source] || f.source)}" aria-label="${esc(SOURCE[f.source] || f.source)}"></span>${note}</dd>`;
   }).join("")}</dl>`;
 }
 
@@ -529,7 +546,7 @@ function editor(fields, keys) {
     else if (S.vocab?.vocab[k]) input = `<select id="${id}" data-field="${k}"><option value="">—</option>${S.vocab.vocab[k].map((o) => `<option value="${o}" ${o === v ? "selected" : ""}>${esc(cap(label(o)))}</option>`).join("")}</select>`;
     else if (LONG.has(k)) input = `<textarea id="${id}" data-field="${k}" rows="2">${esc(v ?? "")}</textarea>`;
     else input = `<input id="${id}" type="text" data-field="${k}" value="${esc(v ?? "")}">`;
-    return `<label for="${id}">${FIELD[k] || k}</label>${input}`;
+    return `<label for="${id}">${NAMES[k] || FIELD[k] || k}</label>${input}`;
   }).join("")}</div>
   <div class="edit-actions"><button class="btn primary" type="submit">Save</button><button class="btn" type="button" data-action="cancel-edit">Cancel</button></div></form>`;
 }
@@ -562,24 +579,31 @@ function teardownPage() {
   const stats = f.stats?.value || {};
   const duration = stats.duration_s || o.duration;
   const slides = isSlides(o.kind);
+  const yt = isYouTube(o.kind);
+  NAMES = o.kind === "video" ? { written_hook: "Title", visual_hook: "Thumbnail" } : o.kind === "short" ? { written_hook: "On screen", visual_hook: "Opening frame" } : {};
+  const thing = slides ? "post" : yt ? (o.kind === "short" ? "Short" : "video") : "reel";
   const views = stats.views_estimated || (o.kind === "carousel" && stats.views == null)
     ? `${stats.views ? "≈" + fmt(stats.views) + " views (estimated from " + fmt(o.likes) + " likes)" : fmt(o.likes) + " likes"}`
     : `${fmt(stats.views ?? o.views)} views`;
+  const reach = o.measure === "median" ? `${views}, against a median ${o.kind === "short" ? "Short" : "long video"} of ${fmt(o.typical)} on a channel of ${fmt(o.followers)} subscribers`
+    : `${views} on ${fmt(o.followers)} followers`;
   const head = `${back}
     <div class="td-head">
       <div class="td-title"><h1>${who(o)}<span class="ratio-big">${ratioText(o)}</span>${kindChip(o)}</h1>
-        <div class="line">${views} on ${fmt(o.followers)} followers${duration ? ` · ${Math.round(duration)} s` : ""}${stats.slides || o.slide_count ? ` · ${stats.slides || o.slide_count} slides` : ""}${o.saves != null ? ` · ${fmt(o.saves)} saves` : ""} · posted ${ago(o.taken_at)}${o.keyword ? ` · found via “${esc(o.keyword)}”` : ""}</div></div>
+        <div class="line">${reach}${duration ? ` · ${yt ? clock(duration) : Math.round(duration) + " s"}` : ""}${stats.slides || o.slide_count ? ` · ${stats.slides || o.slide_count} slides` : ""}${o.saves != null ? ` · ${fmt(o.saves)} saves` : ""} · posted ${ago(o.taken_at)}${o.keyword ? ` · found via “${esc(o.keyword)}”` : ""}</div></div>
       <div class="td-actions">
         ${STATIC ? "" : `<button class="btn ${o.status === "saved" ? "on" : ""}" data-action="${o.status === "saved" ? "unsave" : "save"}">${ICON.star} ${o.status === "saved" ? "Saved" : "Save to bank"}</button>
         <button class="btn quiet" data-action="dismiss">${ICON.x} Dismiss</button>`}
-        <a class="btn quiet" href="${esc(o.url)}" target="_blank" rel="noopener">${ICON.ext} Open ${slides ? "post" : "reel"}</a>
+        <a class="btn quiet" href="${esc(o.url)}" target="_blank" rel="noopener">${ICON.ext} Open ${thing}</a>
       </div>
     </div>`;
   if (td.status === "loading") return head + skeleton();
+  if (td.status === "running" && yt) return head + `<p class="muted" style="margin:16px 0">${({ ai: "The AI is re-reading the thumbnail, frames and transcript…", madlib: "Turning the title, thumbnail and intro into fill-in-the-blank templates…" }[td.mode]
+    || "Pulling the video's details, transcript and comments, saving its thumbnail and frames, then running the AI analysis. Usually 1–2 minutes.")}</p>` + skeleton();
   if (td.status === "running") return head + `<p class="muted" style="margin:16px 0">${slides ? ({ ai: "The AI is re-reading every slide…", madlib: "Turning the slides' text into a fill-in-the-blank template…", scenes: "Describing every slide in SEALCaM. Usually under a minute." }[td.mode] || "Saving every slide, then having the AI read each one: the card, a SEALCaM breakdown per slide and the madlib. Usually 1–3 minutes.")
     : ({ ai: "The AI is re-reading the frames and transcript…", madlib: "Turning the reel's script into a fill-in-the-blank template…", scenes: "Fetching the video again and describing every scene in SEALCaM. Usually under a minute." }[td.mode] || "Pulling post details, transcript and frames, then running the AI analysis. Usually 30–90 seconds.")}</p>` + skeleton();
   if (td.status === "none") return head + `<div class="empty-state"><h2>Not torn down yet</h2>
-      <p>${slides ? `A teardown saves every slide (0–1 ScrapeCreators credits), then has the AI read each one: the card, a SEALCaM breakdown per slide and a madlib of the slides' text${S.status.openrouter ? " (a few cents)" : ""}.`
+      <p>${yt ? `A teardown pulls the video's details, transcript and top comments (3 ScrapeCreators credits), saves its thumbnail and the frames YouTube samples from it, then has the AI read the packaging, intro, sections and rewatched moments${S.status.openrouter ? " (a few cents)" : ""}.` : slides ? `A teardown saves every slide (0–1 ScrapeCreators credits), then has the AI read each one: the card, a SEALCaM breakdown per slide and a madlib of the slides' text${S.status.openrouter ? " (a few cents)" : ""}.`
         : `A teardown pulls the post details and transcript (about 2 ScrapeCreators credits), grabs frames from the video, then has the AI fill in the breakdown${S.status.openrouter ? " (a few cents)" : ""}.`}</p>
       ${STATIC ? "" : `<button class="btn primary" data-action="teardown">${ICON.cut} Tear down</button>`}</div>`;
   if (td.status === "failed" && !data) return head + `<div class="notice">${ICON.alert}<div>Teardown failed: ${esc(td.error)}</div></div>
@@ -596,7 +620,10 @@ function teardownPage() {
     (td.error ? `<div class="notice">${ICON.alert}<div>${esc(td.error)}</div></div>` : "");
   const hookFrames = data.media?.hook_frames || [];
   const frames = data.media?.frames || [];
-  const film = slides ? `<div class="filmstrip slides">${frames.map((src, i) =>
+  const thumb = data.media?.thumbnail;
+  const film = yt ? `<div class="filmstrip ${o.kind === "short" ? "slides" : "yt"}">${thumb ? `<figure><img src="${esc(thumb)}" alt="Thumbnail" data-zoom="${esc(thumb)}"><figcaption>${o.kind === "video" ? "Thumbnail · the hook" : "Thumbnail"}</figcaption></figure>` : ""}${frames.map((src, i) =>
+    `<figure><img src="${esc(src)}" alt="Frame ${i + 1}" data-zoom="${esc(src)}" loading="lazy"><figcaption>Frame ${i + 1} of 3 that YouTube samples</figcaption></figure>`).join("")}</div>`
+    : slides ? `<div class="filmstrip slides">${frames.map((src, i) =>
     `<figure><img src="${esc(src)}" alt="Slide ${i + 1}" data-zoom="${esc(src)}" loading="lazy"><figcaption>${i ? "Slide " + (i + 1) : "Slide 1 · the hook"}</figcaption></figure>`).join("")}</div>`
     : hookFrames.length ? `<div class="filmstrip">${hookFrames.map((src, i) =>
     `<figure><img src="${esc(src)}" alt="Frame at ${(i * 0.5).toFixed(1)} seconds" data-zoom="${esc(src)}"><figcaption>${(i * 0.5).toFixed(1)} s</figcaption></figure>`).join("")}</div>` : "";
@@ -604,6 +631,16 @@ function teardownPage() {
   const evidence = (f.series_evidence?.value || []).length ? `<p class="small muted" style="margin-top:12px">Sibling episodes: ${f.series_evidence.value.map((u, i) => `<a href="${esc(u)}" target="_blank" rel="noopener">episode ${i + 1}</a>`).join(" · ")}</p>` : "";
   const step = duration && frames.length ? Math.max(0.5, Math.round((duration / frames.length) * 2) / 2) : 2;
   const scenes = (data.scenes || []).filter((sc) => sc.S);
+  const sectionsSec = yt ? `<section class="sec" aria-labelledby="sec-scenes"><div class="sec-h"><h2 id="sec-scenes">Sections</h2></div>
+    ${(data.scenes || []).length ? `<p class="small muted" style="margin:0 0 16px">${data.scenes.some((sc) => sc.chapter) ? "The video's own chapters" : "Even slices of the transcript (the video has no chapters)"}, each with its beat and what it covers.</p>
+      <ol class="scenes">${data.scenes.map((sc) => `<li class="scene"><div class="scene-body">
+        <div class="scene-h"><b>${esc(sc.chapter || "Section " + sc.i)}</b><span class="tc">${clock(sc.start)}–${clock(sc.end)}</span>${sc.beat ? `<span class="beat ${esc(sc.beat)}">${esc(sc.beat)}</span>` : ""}</div>
+        ${sc.summary ? `<p class="small">${esc(sc.summary)}</p>` : ""}${sc.said ? `<details class="raw"><summary>What's said</summary><p class="say">“${esc(sc.said)}”</p></details>` : ""}</div></li>`).join("")}</ol>`
+      : `<p class="muted">${o.kind === "short" ? "A Short has no sections: its beats are in the structure above." : "No chapters or transcript to split into sections."}</p>`}</section>` : "";
+  const peaks = (data.rewatch || []).length ? `<p class="small" style="margin:16px 0 6px"><b>Most replayed</b> <span class="faint">(the peaks of YouTube's own graph)</span></p>
+    <ul class="why-odds">${data.rewatch.map((p) => `<li><b>${clock(p.start)}–${clock(p.end)}</b> <span class="faint">(intensity ${p.intensity})</span>${p.said ? `: “${esc(p.said)}”` : ""}</li>`).join("")}</ul>` : "";
+  const comments = (data.comments || []).length ? `<details class="raw" style="margin-top:12px"><summary>Top comments (${data.comments.length})</summary>
+    <ul class="why-odds">${data.comments.slice(0, 10).map((c) => `<li><b>${fmt(c.likes)} likes${c.by_creator ? " · the creator" : ""}:</b> ${esc(c.text)}</li>`).join("")}</ul></details>` : "";
   const unit = slides ? "slides" : "scenes";
   const sceneTools = STATIC || !S.status.openrouter ? "" : `<button class="btn sm quiet" data-action="scenes">${ICON.sparkle} ${scenes.length ? "Redo " + unit : "Break down " + unit}</button>`;
   const scenesSec = `<section class="sec" aria-labelledby="sec-scenes">
@@ -626,18 +663,21 @@ function teardownPage() {
   return `${head}
     <div class="chips td-summary">${chips}${seriesChip}</div>
     ${notices}
-    ${section("hook", f, film, "", slides ? "Hook: the cover slide, then every slide" : "")}
+    ${section("hook", f, film, "", slides ? "Hook: the cover slide, then every slide" : o.kind === "video" ? "Hook: the thumbnail, the title and the first line" : o.kind === "short" ? "Hook: the opening frame and the first line" : "")}
     ${section("structure", f, S.editing === "structure" ? "" : beatsPills(f.structure_pattern?.value),
       slides ? facts([["Slides", stats.slides], ["Carousel type", f.carousel_type?.value ? cap(label(f.carousel_type.value)) : null]])
-        : facts([["Words", f.word_count?.value], ["Words per second", f.words_per_second?.value], ["Length", duration ? Math.round(duration) + " s" : null]]))}
+        : facts([["Words", f.word_count?.value], ["Words per second", f.words_per_second?.value], ["Length", duration ? (yt ? clock(duration) : Math.round(duration) + " s") : null],
+          ...(yt ? [["Sections", (data.scenes || []).length || null]] : [])]))}
+    ${yt ? section("attention", f, "", peaks + comments) : ""}
     ${section("value", f)}
-    ${section("format", f, "", slides ? "" : facts([["Average shot", f.avg_shot_s?.value != null ? f.avg_shot_s.value + " s" : null], ["Hard cuts", f.cuts?.value]]) +
+    ${section("format", f, "", slides || yt ? "" : facts([["Average shot", f.avg_shot_s?.value != null ? f.avg_shot_s.value + " s" : null], ["Hard cuts", f.cuts?.value]]) +
       (frames.length ? `<p class="small muted" style="margin:16px 0 8px">The whole video, about one frame every ${step} s</p><div class="timeline">${frames.map((src) => `<img src="${esc(src)}" alt="" loading="lazy" data-zoom="${esc(src)}">`).join("")}</div>` : ""), slides ? "Sound and text style" : "")}
     ${madlibSec(data)}
-    ${scenesSec}
+    ${yt ? sectionsSec : scenesSec}
     ${section("position", f, "", evidence)}
     ${data.transcript ? `<details class="raw"><summary>Transcript</summary><div class="prose">${esc(data.transcript.text)}</div></details>` : ""}
-    ${data.caption ? `<details class="raw"><summary>Caption</summary><div class="prose">${esc(data.caption)}</div></details>` : ""}
+    ${yt ? (data.description ? `<details class="raw"><summary>Description</summary><div class="prose">${esc(data.description)}</div></details>` : "")
+      : data.caption ? `<details class="raw"><summary>Caption</summary><div class="prose">${esc(data.caption)}</div></details>` : ""}
     <div class="sec">${tools}</div>`;
 }
 
@@ -648,6 +688,7 @@ function madlibSec(data) {
     <p class="muted">The reel's own script as a fill-in-the-blank template. Plans make one automatically for every reel they borrow from.</p></section>`;
   const rows = [...Object.entries(m.hooks || {}).filter(([, v]) => v?.template).map(([k, v]) => [`${cap(k)} hook`, v]),
     ...(m.spoken || []).map((x) => [x.beat || "Line", x]), ...(m.on_screen || []).map((x) => ["On screen", x]),
+    ...(m.outline || []).map((x) => [`Section · ${x.beat || ""}`, x]),
     ...(m.caption?.template ? [["Caption", m.caption]] : [])];
   const sh = data.madlib_sheet;
   const editor = sh && sh.variables.length ? `
@@ -738,7 +779,7 @@ function planForm(teardowns) {
       </div>
       ${kinds.length > 1 ? `<label class="field"><span>Post types</span><select name="kinds">
         <option value="">Every type you've torn down</option>
-        ${["reel", "carousel", "slideshow"].filter((k) => kinds.includes(k)).map((k) => `<option value="${k}" ${picked === k ? "selected" : ""}>${cap(KINDS_PLURAL[k])} only (${count(k)} teardowns)</option>`).join("")}</select>
+        ${ALL_KINDS.filter((k) => kinds.includes(k)).map((k) => `<option value="${k}" ${picked === k ? "selected" : ""}>${cap(KINDS_PLURAL[k])} only (${count(k)} teardowns)</option>`).join("")}</select>
         <span class="help">Each post keeps its source's type: a slideshow is planned slide by slide from slideshow teardowns.</span></label>` : ""}
       <div class="toolbar"><button class="btn primary" type="submit" ${teardowns < 3 || STATIC ? "disabled" : ""}>${ICON.calendar} Plan my week</button>
         ${S.plans.length ? `<button class="btn quiet" type="button" data-action="cancel-plan">Cancel</button>` : ""}
@@ -775,6 +816,8 @@ function shotRef(ref) {
 function planDay(p, i, rates, planId) {
   const o = p.odds;
   const slides = isSlides(p.post_kind);
+  const longVideo = p.post_kind === "video";
+  const med = rates.basis === "median";  // YouTube: measured against the channel's own median, not followers
   const kindName = KIND[p.post_kind || "reel"];
   const ceiling = (rates.p5 || 0.01) * 3;
   const sources = (p.source_outliers || []).map((sc) => outlier(sc)).filter(Boolean);
@@ -784,7 +827,7 @@ function planDay(p, i, rates, planId) {
       <div class="when"><span class="d">${weekday(p.date)}</span><span class="date">${dateLabel(p.date)}</span></div>
       <div class="what"><div class="title">${fills(p.title)}</div>
         <div class="chips"><span class="chip">${esc(p.funnel.toUpperCase())}</span><span class="chip">${esc(cap(label(p.content_type)))}</span>
-          ${slides ? `<span class="chip kind">${kindName} · ${(p.beats || []).length} slides</span>` : ""}${p.carousel_type ? `<span class="chip info">${esc(cap(label(p.carousel_type)))}</span>` : ""}
+          ${slides ? `<span class="chip kind">${kindName} · ${(p.beats || []).length} slides</span>` : isYouTube(p.post_kind) ? `<span class="chip kind">${kindName}</span>` : ""}${p.carousel_type ? `<span class="chip info">${esc(cap(label(p.carousel_type)))}</span>` : ""}
           ${p.format ? `<span class="chip info">${esc(cap(label(p.format)))}</span>` : ""}${p.angle ? `<span class="chip info">${esc(cap(label(p.angle)))}</span>` : ""}
           ${p.series_marker ? `<span class="chip accent">${esc(p.series_marker)}</span>` : ""}</div></div>
       <div class="oddsbox"><span class="pct">${pct(o.p5)}</span><span class="lbl">chance of a 5× outlier · ${esc(o.band)}</span>
@@ -795,21 +838,29 @@ function planDay(p, i, rates, planId) {
         <button class="btn sm" data-action="copy-brief" data-slot="${p.slot}">${ICON.copy} Copy brief</button>
         ${STATIC ? "" : `<a class="btn sm quiet" href="/api/plans/${planId}/export.md?post=${p.slot}" download>${ICON.download} Download .md</a>`}</div>
       ${sources.length ? `<div class="refs"><span class="small muted">Reference ${slides ? "posts" : "videos"}</span><div class="sources">${sources.map((x) => `<button class="source" data-open="${esc(x.shortcode)}">${x.cover ? `<img src="${esc(x.cover)}" alt="">` : `<span class="noimg"></span>`}${who(x)} · ${ratioText(x)}</button>`).join("")}</div></div>` : ""}
-      <div class="ladder">${rung("p1", "beats your follower count", rates.p1)}${rung("p2", "2× your followers", rates.p2)}${rung("p5", "5× (an outlier)", rates.p5)}${rung("p10", "10×", rates.p10)}</div>
+      <div class="ladder">${rung("p1", med ? "beats your channel's median" : "beats your follower count", rates.p1)}${rung("p2", med ? "2× your median" : "2× your followers", rates.p2)}${rung("p5", "5× (an outlier)", rates.p5)}${rung("p10", "10×", rates.p10)}</div>
       <ul class="why-odds">
         <li>${o.multiplier}× the niche base rate: evidence ×${o.factors.evidence} · funnel stage ×${o.factors.funnel}${o.factors.source_median_ratio ? ` · its sources median ${o.factors.source_median_ratio}×` : ""}${o.factors.replicated_by ? ` · a format ${o.factors.replicated_by} creators copy` : ""}.</li>
         ${o.support.map((s) => `<li>${esc(cap(label(s.attr)))} “${esc(label(s.value))}”: used by ${s.count} of ${s.of} outliers.</li>`).join("")}
         <li>${cap(o.confidence)} confidence: ${rates.reels} ${KINDS_PLURAL[o.kind || "reel"]} scanned${rates.estimated ? " (views estimated from likes)" : ""}, ${o.support[0]?.of ?? 0} teardowns. Treat it as a guide, not a forecast.</li>
       </ul>
-      <section class="sec"><div class="sec-h"><h2>${slides ? "Cover slide" : "Hook"}</h2></div>
+      ${longVideo ? `<section class="sec"><div class="sec-h"><h2>Packaging</h2><span class="small muted">The title and thumbnail decide the click</span></div>
+        <dl class="rows"><dt>Title</dt><dd class="quote">“${fills(p.hook?.written)}”${madlibLine(p.hook?.written_template)}</dd>
+          <dt>Thumbnail</dt><dd>${fills(p.hook?.visual)}${p.hook?.thumbnail_text ? `<span class="note">Text on it: “${fills(p.hook.thumbnail_text)}”</span>` : ""}${madlibLine(p.hook?.visual_template)}</dd>
+          <dt>First line</dt><dd class="quote">“${fills(p.hook?.verbal)}”${madlibLine(p.hook?.verbal_template)}</dd></dl></section>`
+      : `<section class="sec"><div class="sec-h"><h2>${slides ? "Cover slide" : "Hook"}</h2></div>
         <dl class="rows">${slides ? "" : `<dt>Say</dt><dd class="quote">“${fills(p.hook?.verbal)}”${madlibLine(p.hook?.verbal_template)}</dd>`}
           <dt>${slides ? "On the slide" : "On screen"}</dt><dd>${fills(p.hook?.written)}${madlibLine(p.hook?.written_template)}</dd>
-          <dt>Show</dt><dd>${fills(p.hook?.visual)}${madlibLine(p.hook?.visual_template)}</dd></dl></section>
+          <dt>Show</dt><dd>${fills(p.hook?.visual)}${madlibLine(p.hook?.visual_template)}</dd></dl></section>`}
       ${p.madlib_source && outlier(p.madlib_source) ? `<p class="small muted" style="margin:0">${slides ? "These slides fill" : "This script fills"} the madlib of <button class="linkish" data-open="${esc(p.madlib_source)}">${who(outlier(p.madlib_source))}'s ${KIND[outlier(p.madlib_source).kind || "reel"].toLowerCase()}</button>. Open it to see the original variables and change them.</p>` : ""}
-      <section class="sec"><div class="sec-h"><h2>${slides ? "Slides" : "Script"}</h2><span class="small muted">${p.length_s ? `about ${p.length_s} s · ` : ""}${esc(cap(label(p.complexity)))} ${esc(label(p.delivery))}${p.story_type ? ` · ${esc(label(p.story_type))} story` : ""}</span></div>
+      <section class="sec"><div class="sec-h"><h2>${slides ? "Slides" : longVideo ? "Intro, word for word" : "Script"}</h2><span class="small muted">${p.length_s ? `about ${longVideo ? Math.round(p.length_s / 60) + " min in all" : p.length_s + " s"} · ` : ""}${esc(cap(label(p.complexity)))} ${esc(label(p.delivery))}${p.story_type ? ` · ${esc(label(p.story_type))} story` : ""}</span></div>
         <ol class="script">${(p.beats || []).map((b) => `<li><span class="beat ${esc(b.label)}">${esc(b.label)}</span><div>
           ${madlibLine(b.template)}<div class="say">${slides ? fills(b.text).replace(/\n/g, "<br>") : fills(b.say)}</div>
           <div class="dir">${b.show ? `<b>${slides ? "Image" : "Film"}:</b> ${fills(b.show)}` : ""}${b.show && b.edit ? " · " : ""}${b.edit ? `<b>${slides ? "Design" : "Edit"}:</b> ${fills(b.edit)}` : ""}</div></div></li>`).join("")}</ol></section>
+      ${(p.sections || []).length ? `<section class="sec"><div class="sec-h"><h2>Outline</h2><span class="small muted">One section per part of the video, each handing the viewer to the next</span></div>
+        <ol class="script">${p.sections.map((sec) => `<li><span class="beat ${esc(sec.label || "")}">${esc(sec.label || "")}</span><div>
+          <div class="say"><b>${fills(sec.title)}</b>${sec.minutes ? ` <span class="faint">· about ${esc(sec.minutes)} min</span>` : ""}</div>
+          <div class="dir">${fills(sec.covers)}${sec.retention ? ` · <b>Into the next:</b> ${fills(sec.retention)}` : ""}</div></div></li>`).join("")}</ol></section>` : ""}
       ${(p.shots || []).length ? `<section class="sec"><div class="sec-h"><h2>${slides ? "Slide list" : "Shot list"}</h2><span class="small muted">SEALCaM · ${slides ? "one entry per slide" : "one shot per setup or cut"}</span></div>
         <ol class="shots">${p.shots.map((sh, k) => `<li class="shot">
           <div class="scene-h"><b>${slides ? "Slide" : "Shot"} ${k + 1}</b>${sh.beat ? `<span class="beat ${esc(sh.beat)}">${esc(sh.beat)}</span>` : ""}${sh.duration_s ? `<span class="tc">about ${sh.duration_s} s</span>` : ""}
@@ -821,7 +872,7 @@ function planDay(p, i, rates, planId) {
           ${sh.kept || sh.changed ? `<p class="small muted">${sh.kept ? `<b>Kept:</b> ${fills(sh.kept)}` : ""}${sh.kept && sh.changed ? " · " : ""}${sh.changed ? `<b>Changed:</b> ${fills(sh.changed)}` : ""}</p>` : ""}</li>`).join("")}</ol></section>` : p.shots_error ? `<div class="notice">${ICON.alert}<div>The shot list failed: ${esc(p.shots_error)}</div></div>` : ""}
       <section class="sec"><div class="sec-h"><h2>Close and post</h2></div>
         <dl class="rows"><dt>Call to action</dt><dd class="quote">“${fills(p.cta?.line)}”<span class="note">${esc(cap(label(p.cta_type)))} · ${esc(label(p.cta?.mechanic))}</span></dd>
-          <dt>Caption</dt><dd>${fills(p.caption_first_line)}<span class="note">${(p.hashtags || []).map((h) => "#" + esc(String(h).replace(/^#/, ""))).join(" ")}</span></dd>
+          <dt>${longVideo ? "Description" : "Caption"}</dt><dd>${fills(p.caption_first_line)}<span class="note">${(p.hashtags || []).map((h) => "#" + esc(String(h).replace(/^#/, ""))).join(" ")}</span></dd>
           ${p.sound ? `<dt>Sound</dt><dd>${fills(p.sound)}</dd>` : ""}</dl></section>
       <section class="sec"><div class="sec-h"><h2>Why it should work</h2></div>
         <p>${fills(p.why)}</p>
@@ -868,12 +919,14 @@ function bankView() {
 const formatChecks = (s) => `<fieldset class="field"><span>Post types</span>
   <label class="check"><input type="checkbox" name="reels" ${s.reels !== false ? "checked" : ""}> Instagram reels</label>
   <label class="check"><input type="checkbox" name="carousels" ${s.carousels ? "checked" : ""}> Instagram carousels <span class="help">From each creator's posts feed (Instagram has no carousel search). Views are estimated from likes.</span></label>
-  <label class="check"><input type="checkbox" name="slideshows" ${s.slideshows ? "checked" : ""}> TikTok slideshows <span class="help">TikTok's Top search for each keyword, then each slideshow creator's feed.</span></label></fieldset>`;
+  <label class="check"><input type="checkbox" name="slideshows" ${s.slideshows ? "checked" : ""}> TikTok slideshows <span class="help">TikTok's Top search for each keyword, then each slideshow creator's feed.</span></label>
+  <label class="check"><input type="checkbox" name="youtube_videos" ${s.youtube_videos ? "checked" : ""}> YouTube videos <span class="help">Video search for each keyword, then each channel's latest videos. An outlier beats its channel's median video, not its subscribers.</span></label>
+  <label class="check"><input type="checkbox" name="youtube_shorts" ${s.youtube_shorts ? "checked" : ""}> YouTube Shorts <span class="help">Each channel's latest Shorts, plus the channels behind each keyword's top Shorts, against the channel's median Short.</span></label></fieldset>`;
 
 function newResearchView() {
   const d = S.vocab?.defaults || {};
   const num = (k, lbl, attrs = "") => `<label class="field"><span>${lbl}</span><input type="number" name="${k}" value="${esc(d[k])}" ${attrs}></label>`;
-  return `<div class="page-head"><h1>New research</h1><p>Pick keywords for your niche, and name any accounts you want to study. The app finds creators with 1K–500K followers and keeps their posts (reels, carousels or TikTok slideshows) that got 5× or more views than followers.</p></div>
+  return `<div class="page-head"><h1>New research</h1><p>Pick keywords for your niche, and name any accounts you want to study. The app finds creators with 1K–500K followers and keeps their posts (reels, carousels or TikTok slideshows) that got 5× or more views than followers. On YouTube it keeps the videos and Shorts that got 3× or more their channel's median.</p></div>
     <form id="new-form" class="form">
       <label class="field"><span>Project name</span><input type="text" name="name" required placeholder="e.g. Dog training"></label>
       <label class="field"><span>Niche</span><input type="text" name="niche" placeholder="e.g. Puppy training for first-time owners"><span class="help">Optional. The planner uses it.</span></label>
@@ -887,7 +940,8 @@ function newResearchView() {
           <div class="grid-3">${num("min_ratio", "Min ratio", 'step="0.5"')}${num("min_followers", "Min followers")}${num("max_followers", "Max followers")}</div>
           <div class="grid-3">${num("search_pages", "Search pages", 'min="1" max="11"')}${num("reel_pages", "Reel pages")}${num("max_creators", "Max creators", 'min="1"')}</div>
           <div class="grid-3">${num("credit_budget", "Credit budget", 'min="1"')}${num("max_age_days", "Max age (days)")}${num("post_pages", "Carousel pages per creator", 'min="1"')}</div>
-          <div class="grid-3">${num("tiktok_search_pages", "TikTok search pages", 'min="1"')}${num("tiktok_pages", "TikTok pages per creator", 'min="1"')}<div></div></div>
+          <div class="grid-3">${num("tiktok_search_pages", "TikTok search pages", 'min="1"')}${num("tiktok_pages", "TikTok pages per creator", 'min="1"')}${num("youtube_min_ratio", "YouTube min ratio (× channel median)", 'step="0.5"')}</div>
+          <div class="grid-3">${num("youtube_pages", "YouTube video pages per channel", 'min="1"')}${num("youtube_short_lookups", "YouTube Shorts looked up per keyword", 'min="0"')}${num("youtube_max_subscribers", "Max subscribers")}</div>
         </div></details>
       <label class="check"><input type="checkbox" name="start" checked> Start research right away</label>
       <div class="toolbar"><button class="btn primary" type="submit">${ICON.play} Create</button><button class="btn quiet" type="button" data-action="cancel-new">Cancel</button>
@@ -923,7 +977,8 @@ function settingsView() {
       <div class="grid-3">${num("search_pages", "Search pages per keyword")}${num("reel_pages", "Reel pages per creator")}${num("max_creators", "Max creators")}</div>
       <div class="grid-3">${num("credit_budget", "Credit budget per run")}${num("max_age_days", "Max age (days)")}${num("post_pages", "Carousel pages per creator")}</div>
       ${formatChecks(s)}
-      <div class="grid-3">${num("tiktok_search_pages", "TikTok search pages per keyword")}${num("tiktok_pages", "TikTok pages per creator")}<div></div></div>
+      <div class="grid-3">${num("tiktok_search_pages", "TikTok search pages per keyword")}${num("tiktok_pages", "TikTok pages per creator")}${num("youtube_min_ratio", "YouTube min ratio (× channel median)", 0.5)}</div>
+      <div class="grid-3">${num("youtube_pages", "YouTube video pages per channel")}${num("youtube_short_lookups", "YouTube Shorts looked up per keyword")}${num("youtube_max_subscribers", "Max subscribers (YouTube)")}</div>
       <label class="field"><span>AI model</span><input type="text" name="ai_model" value="${esc(s.ai_model)}"><span class="help">An OpenRouter model that reads images. Default: anthropic/claude-sonnet-5.5</span></label>
       <label class="check"><input type="checkbox" name="ai_annotation" ${s.ai_annotation ? "checked" : ""}> Run AI analysis at the end of every teardown</label>
       <label class="check"><input type="checkbox" name="account_search" ${s.account_search ? "checked" : ""}> Also search Instagram accounts for each keyword (1 credit each)</label>
@@ -945,12 +1000,13 @@ function renderRight() {
 
 function ratesPanel(r) {
   if (!r || !r.reels) return `<p class="small muted">Run research to measure this niche's base rates.</p>`;
+  const med = r.basis === "median";
   return `<div class="panel"><div class="kv">
-      <div><span class="k">Beat their followers</span><span class="v">${pct(r.p1)}</span></div>
-      <div><span class="k">2× followers</span><span class="v">${pct(r.p2)}</span></div>
-      <div><span class="k">5× (outlier)</span><span class="v">${pct(r.p5)}</span></div>
+      <div><span class="k">${med ? "Beat the channel's median" : "Beat their followers"}</span><span class="v">${pct(r.p1)}</span></div>
+      <div><span class="k">2× ${med ? "the median" : "followers"}</span><span class="v">${pct(r.p2)}</span></div>
+      <div><span class="k">5× (${med ? "a strong outlier" : "outlier"})</span><span class="v">${pct(r.p5)}</span></div>
       <div><span class="k">10×</span><span class="v">${pct(r.p10)}</span></div></div></div>
-    <p class="xs faint">Share of ${r.reels} ${KINDS_PLURAL[r.kind || "reel"]} from in-range creators that beat each multiple of their follower count${r.estimated ? ", with views estimated from likes" : ""}.</p>`;
+    <p class="xs faint">Share of ${r.reels} ${KINDS_PLURAL[r.kind || "reel"]} from in-range ${med ? "channels" : "creators"} that beat each multiple of ${med ? "their channel's median for that kind" : "their follower count"}${r.estimated ? ", with views estimated from likes" : ""}.</p>`;
 }
 
 function bars(list) {
@@ -967,7 +1023,8 @@ function nicheInspector() {
   const noAi = torn.filter((o) => !o.td.ai).length;
   const pending = noAi ? `<div class="notice">${ICON.alert}<div>${noAi} of ${torn.length} teardowns are still waiting for the AI pass, so the counts below come from pattern matching only.</div></div>` : "";
   const other = Object.entries(S.rates?.by_kind || {}).filter(([k, r]) => k !== "reel" && r.reels);
-  return `<div class="insp-sec"><h3>How often reels take off here</h3>${ratesPanel(S.rates)}</div>
+  const reels = S.rates?.reels || project().settings.reels || !other.length;
+  return `${reels ? `<div class="insp-sec"><h3>How often reels take off here</h3>${ratesPanel(S.rates)}</div>` : ""}
     ${other.map(([k, r]) => `<div class="insp-sec"><h3>How often ${KINDS_PLURAL[k]} take off here</h3>${ratesPanel(r)}</div>`).join("")}
     ${pt && pt.teardowns ? `${pending}
     <div class="insp-sec"><h3>Hook patterns</h3>${bars(pt.hook_pattern)}</div>
@@ -989,7 +1046,8 @@ function teardownInspector() {
   const legend = [["auto", "From the data"], ["heuristic", "Pattern match, check it"], ["ai", "AI, check against the frames"], ["needs_review", "Needs review"], ["human", "You set it"]];
   return `<div class="insp-top"><div class="panel"><div class="kv">
       <div><span class="k">Views</span><span class="v">${f.stats?.value?.views_estimated ? "≈" : ""}${fmt(f.stats?.value?.views ?? o.views)}</span></div>
-      <div><span class="k">Followers</span><span class="v">${fmt(o.followers)}</span></div>
+      <div><span class="k">${cap(audience(o))}</span><span class="v">${fmt(o.followers)}</span></div>
+      ${o.measure === "median" ? `<div><span class="k">Channel median</span><span class="v">${fmt(o.typical)}</span></div>` : ""}
       <div><span class="k">Likes</span><span class="v">${fmt(o.likes)}</span></div>
       <div><span class="k">Comments</span><span class="v">${fmt(o.comments)}</span></div>
     </div></div>${o.cover ? `<img class="insp-cover" src="${esc(o.cover)}" alt="Cover of the reel" data-zoom="${esc(o.cover)}">` : ""}</div>
@@ -1123,15 +1181,20 @@ function estimate(form) {
   const f = form.reels ? formatSettings(form) : { reels: true };
   // Carousels add a posts-feed scan per creator; slideshows add TikTok's Top search per keyword and a feed scan per creator.
   const tiktok = f.slideshows ? kws * Number(v.tiktok_search_pages || 2) + Math.min(Number(v.max_creators || 30), kws * 8) * Number(v.tiktok_pages || 2) : 0;
+  // YouTube: two video searches per keyword (relevance and popular), Shorts search and channel lookups, then per channel its
+  // details, its video pages and one Shorts page.
+  const yt = f.youtube_videos || f.youtube_shorts ? kws * 2 + (f.youtube_shorts ? kws * (1 + Number(v.youtube_short_lookups || 4)) : 0)
+    + Number(v.max_creators || 30) * (1 + (f.youtube_videos ? Number(v.youtube_pages || 2) : 0) + (f.youtube_shorts ? 1 : 0)) : 0;
   const est = (f.reels || f.carousels ? searches + creators * (1 + (f.reels ? Number(v.reel_pages || 2) : 0) + (f.carousels ? Number(v.post_pages || 2) : 0)) : 0)
-    + tiktok + handles(v.study_accounts).length * 9;
+    + tiktok + yt + handles(v.study_accounts).length * 9;
   $("#estimate").textContent = kws ? `About ${est} credits (cap ${v.credit_budget}) · roughly ${Math.ceil((searches * 12 + creators * 6) / 60)} min` : "Add keywords to see a credit estimate";
 }
 
 const handles = (text) => [...new Set(String(text || "").split(/[\s,]+/).map((h) => h.replace(/^@/, "").trim().toLowerCase()).filter(Boolean))];
 const NUMERIC = ["min_ratio", "min_followers", "max_followers", "search_pages", "reel_pages", "max_creators", "credit_budget", "max_age_days",
-  "post_pages", "tiktok_search_pages", "tiktok_pages"];
-const formatSettings = (form) => ({ reels: form.reels.checked, carousels: form.carousels.checked, slideshows: form.slideshows.checked });
+  "post_pages", "tiktok_search_pages", "tiktok_pages", "youtube_min_ratio", "youtube_pages", "youtube_short_lookups", "youtube_max_subscribers"];
+const formatSettings = (form) => ({ reels: form.reels.checked, carousels: form.carousels.checked, slideshows: form.slideshows.checked,
+  youtube_videos: form.youtube_videos.checked, youtube_shorts: form.youtube_shorts.checked });
 document.addEventListener("submit", async (ev) => {
   const form = ev.target;
   ev.preventDefault();

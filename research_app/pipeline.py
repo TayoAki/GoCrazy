@@ -3,7 +3,13 @@
 Instagram reels and carousels come from the same creators (found by reel and account search); TikTok slideshows come
 from TikTok's Top search and then each slideshow creator's feed. Instagram shows no views for carousels, so a carousel's
 views are estimated from its likes at the niche's own likes-per-view rate, and its outlier is marked as estimated.
+
+YouTube long videos and Shorts come from video search per keyword (plus the channels behind each keyword's top Shorts),
+then each channel's latest videos and Shorts. Subscribers predict views poorly on YouTube, so a YouTube outlier is a video
+with youtube_min_ratio times its channel's median views for that kind (long videos and Shorts are measured apart).
 """
+
+import statistics
 
 import json
 import threading
@@ -13,7 +19,7 @@ from datetime import datetime, timezone
 from . import db, doubledown, media, reach
 from .config import scrapecreators_key
 from .scrapecreators import (ScrapeCreators, ScrapeError, carousel_from_post_item, is_slideshow, reel_from_post_item,
-                             reel_from_user_item, slideshow_from_tiktok_item)
+                             reel_from_user_item, slideshow_from_tiktok_item, yt_from_item, yt_handle)
 
 _stop_flags = {}
 
@@ -100,7 +106,7 @@ def save_project_creators(conn, project_id, found):
 
 def mark_outliers(conn, project_id, username, followers, settings, keyword, lpv):
     """Every post of the creator's that passes the outlier test, for the kinds the project researches. Returns the new count."""
-    kinds = reach.enabled_kinds(settings)
+    kinds = [k for k in reach.enabled_kinds(settings) if k not in reach.YOUTUBE_KINDS]  # YouTube is measured by channel median
     if not kinds:
         return 0
     new = 0
@@ -138,16 +144,22 @@ def _run(run_id, project_id, stop):
 
     status, message = "done", None
     instagram = settings["reels"] or settings["carousels"]
-    # Share of the progress bar each platform gets.
-    split = (0.6 if settings["slideshows"] else 0.9) if instagram else 0.0
+    youtube = settings["youtube_videos"] or settings["youtube_shorts"]
+    # Each platform gets an equal share of the progress bar.
+    share = 0.9 / max(1, instagram + bool(settings["slideshows"]) + youtube)
     try:
+        at = 0.0
         if instagram:
-            found = _search_phase(run_id, project_id, client, keywords, settings, stats, check, split / 0.9)
+            found = _search_phase(run_id, project_id, client, keywords, settings, stats, check, share / 0.9)
             with db.connect() as conn:
                 lpv = reach.likes_per_view(conn, project_id)
-            _scan_phase(run_id, project_id, client, found, settings, stats, check, stop, split / 0.9, lpv)
+            _scan_phase(run_id, project_id, client, found, settings, stats, check, stop, share / 0.9, lpv)
+            at += share
         if settings["slideshows"]:
-            _tiktok_phase(run_id, project_id, client, keywords, settings, stats, check, stop, split, 0.9)
+            _tiktok_phase(run_id, project_id, client, keywords, settings, stats, check, stop, at, at + share)
+            at += share
+        if youtube:
+            _youtube_phase(run_id, project_id, client, keywords, settings, stats, check, stop, at, at + share)
     except Stopped:
         status, message = "stopped", "Stopped by you"
     except BudgetReached:
@@ -466,3 +478,208 @@ def _scan_tiktok_creator(client, project_id, username, info, settings, check):
         status, result["new_outliers"] = _tiktok_outliers(conn, project_id, username, info, settings, scanned=True)
     result["scanned"] = int(status == "scanned")
     return result
+
+
+# ---------- YouTube long videos and Shorts ----------
+
+MIN_AGE_DAYS = 7    # a week-old video's views are still climbing: it isn't judged, and it doesn't count toward the median
+MIN_TYPICAL = 5     # videos of a kind needed to know a channel's typical one
+
+
+def _youtube_phase(run_id, project_id, client, keywords, settings, stats, check, stop, start, end):
+    """Video search per keyword (relevance and popular, this year), the channels behind each keyword's top Shorts, then each
+    channel's latest long videos and Shorts, each judged against the channel's own median for that kind."""
+    found = {}
+    sorts = ("relevance", "popular") if settings["youtube_videos"] or settings["youtube_shorts"] else ()
+    jobs = [(kw, sort) for kw in keywords for sort in sorts]
+    for i, (kw, sort) in enumerate(jobs):
+        token = None
+        for page in range(settings["youtube_search_pages"]):
+            check()
+            _update(run_id, phase="youtube", progress=start + (end - start) * 0.25 * i / max(len(jobs), 1),
+                    message=f'Searching YouTube for "{kw}" ({sort}, page {page + 1})', credits_used=client.credits_used)
+            try:
+                items, token = client.yt_search(kw, "videos", sort, "this_year", token)
+            except ScrapeError as e:
+                if e.out_of_credits:
+                    raise
+                db.log(project_id, "warning", f'YouTube search failed for "{kw}" ({sort}): {e}')
+                break
+            stats["searches"] += 1
+            with db.connect() as conn:
+                for item in items:
+                    _save_youtube_item(conn, item, "video", found, kw)
+            if not token:
+                break
+    if settings["youtube_shorts"] and settings["youtube_short_lookups"]:
+        _youtube_short_channels(run_id, project_id, client, keywords, settings, stats, check, found, start, end)
+    with db.connect() as conn:
+        save_project_creators(conn, project_id, found)
+    stats["creators_found"] += len(found)
+    # Channels surfaced by more keywords, then by more search hits, are more central to the niche: scan them first.
+    ranked = sorted(found.items(), key=lambda kv: (-len(kv[1]["keywords"]), -kv[1]["hits"], kv[0]))[: settings["max_creators"]]
+    if not ranked:
+        return
+    lock = threading.Lock()
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        futures = [pool.submit(_scan_youtube_channel, client, project_id, username, info, settings, check)
+                   for username, info in ranked]
+        try:
+            for done, fut in enumerate(as_completed(futures), 1):
+                result = fut.result()
+                with lock:
+                    stats["creators_scanned"] += result["scanned"]
+                    stats["reels_checked"] += result["reels"]
+                    stats["new_outliers"] += result["new_outliers"]
+                _update(run_id, phase="youtube", progress=start + (end - start) * (0.4 + 0.6 * done / len(futures)),
+                        message=f"Scanned {done}/{len(futures)} YouTube channels · {stats['new_outliers']} new outliers",
+                        credits_used=client.credits_used)
+        except (Stopped, BudgetReached, ScrapeError):
+            stop.set()
+            pool.shutdown(cancel_futures=True)
+            raise
+
+
+def _save_youtube_item(conn, item, kind, found=None, keyword=None, username=None):
+    """Save one YouTube video or Short under its channel ("yt:<handle>"). Returns the username or None."""
+    handle = yt_handle(item.get("channel")) if username is None else None
+    username = username or (f"yt:{handle}" if handle else None)
+    if not username or not item.get("id") or item.get("isPaidPromotion"):
+        return None
+    post = yt_from_item(item, kind)
+    if kind == "video" and not post["duration"]:
+        return None  # a live stream or premiere: no length, nothing to compare
+    upsert_reel(conn, post, username)
+    if found is not None:
+        entry = found.setdefault(username, {"keywords": set(), "hits": 0, "full_name": (item.get("channel") or {}).get("title")})
+        entry["keywords"].add(keyword)
+        entry["hits"] += 1
+    return username
+
+
+def _youtube_short_channels(run_id, project_id, client, keywords, settings, stats, check, found, start, end):
+    """Shorts search hides each Short's channel, so the top few Shorts per keyword are looked up (1 credit each) to learn
+    whose they are. Their channels then join the channel scan like any other."""
+    for i, kw in enumerate(keywords):
+        check()
+        _update(run_id, phase="youtube", progress=start + (end - start) * (0.25 + 0.15 * i / max(len(keywords), 1)),
+                message=f'Finding the channels behind "{kw}" Shorts', credits_used=client.credits_used)
+        try:
+            shorts, _ = client.yt_search(kw, "shorts")
+        except ScrapeError as e:
+            if e.out_of_credits:
+                raise
+            db.log(project_id, "warning", f'YouTube Shorts search failed for "{kw}": {e}')
+            continue
+        stats["searches"] += 1
+        with db.connect() as conn:
+            known = {r[0] for r in conn.execute("SELECT shortcode FROM reels WHERE platform='youtube'")}
+        top = sorted((s for s in shorts if s.get("id") and f"yt-{s['id']}" not in known),
+                     key=lambda s: -(s.get("viewCountInt") or 0))[: settings["youtube_short_lookups"]]
+        for short in top:
+            check()
+            try:
+                detail = client.yt_video(f"https://www.youtube.com/shorts/{short['id']}")
+            except ScrapeError as e:
+                if e.out_of_credits:
+                    raise
+                continue
+            with db.connect() as conn:
+                _save_youtube_item(conn, {**detail, "id": short["id"]}, "short", found, kw)
+
+
+def _scan_youtube_channel(client, project_id, username, info, settings, check):
+    result = {"scanned": 0, "reels": 0, "new_outliers": 0}
+    handle = username[3:]
+
+    def set_status(status):
+        with db.connect() as conn:
+            conn.execute("UPDATE project_creators SET status=? WHERE project_id=? AND username=?", (status, project_id, username))
+
+    check()
+    try:
+        channel = client.yt_channel(handle)
+    except ScrapeError as e:
+        if e.out_of_credits:
+            raise
+        set_status("error")
+        return result
+    subscribers = channel.get("subscriberCount")
+    with db.connect() as conn:
+        save_creator(conn, username, channel.get("name") or info.get("full_name"), subscribers, channel.get("isVerified"))
+    if not subscribers:
+        set_status("error")
+        return result
+    if subscribers < settings["min_followers"]:
+        set_status("too_small")
+        return result
+    if subscribers > settings["youtube_max_subscribers"]:
+        set_status("too_big")
+        return result
+    if settings["youtube_videos"]:
+        token = None
+        for _ in range(settings["youtube_pages"]):
+            check()
+            try:
+                items, token = client.yt_channel_videos(handle, token)
+            except ScrapeError as e:
+                if e.out_of_credits:
+                    raise
+                break
+            with db.connect() as conn:
+                result["reels"] += sum(bool(_save_youtube_item(conn, it, "video", username=username)) for it in items)
+            if not items or not token:
+                break
+    if settings["youtube_shorts"]:
+        check()
+        try:
+            shorts = client.yt_channel_shorts(handle)
+        except ScrapeError as e:
+            if e.out_of_credits:
+                raise
+            shorts = []
+        with db.connect() as conn:
+            result["reels"] += sum(bool(_save_youtube_item(conn, it, "short", username=username)) for it in shorts)
+    keyword = sorted(info["keywords"])[0] if info.get("keywords") else None
+    with db.connect() as conn:
+        conn.execute("UPDATE creators SET reels_fetched_at=? WHERE username=?", (db.now(), username))
+        result["new_outliers"] = mark_youtube_outliers(conn, project_id, username, settings, keyword)
+    set_status("scanned")
+    result["scanned"] = 1
+    return result
+
+
+def channel_typical(posts, max_age_days):
+    """A channel's median views for one kind: its videos from the research window that are at least a week old, or, when
+    it posted fewer than MIN_TYPICAL of those, every one we have that is at least a week old. None below MIN_TYPICAL."""
+    settled = [p for p in posts if p["views"] and (age_days(p["taken_at"]) or 0) >= MIN_AGE_DAYS]
+    recent = [p for p in settled if (age_days(p["taken_at"]) or 0) <= max_age_days]
+    pool = recent if len(recent) >= MIN_TYPICAL else settled
+    return statistics.median(p["views"] for p in pool) if len(pool) >= MIN_TYPICAL else None
+
+
+def mark_youtube_outliers(conn, project_id, username, settings, keyword):
+    """Every video of the channel's, per kind the project researches, with youtube_min_ratio times the channel's median
+    views for that kind, posted within the window and at least a week ago. Returns the new count."""
+    new = 0
+    for kind in [k for k in reach.enabled_kinds(settings) if k in reach.YOUTUBE_KINDS]:
+        posts = conn.execute("SELECT shortcode, views, taken_at FROM reels WHERE username=? AND kind=?", (username, kind)).fetchall()
+        typical = channel_typical(posts, settings["max_age_days"])
+        if not typical:
+            continue
+        for post in posts:
+            age = age_days(post["taken_at"])
+            if not post["views"] or age is None or not MIN_AGE_DAYS <= age <= settings["max_age_days"]:
+                continue
+            ratio = round(post["views"] / typical, 1)
+            if ratio < settings["youtube_min_ratio"]:
+                continue
+            existed = conn.execute("SELECT 1 FROM outliers WHERE project_id=? AND shortcode=?",
+                                   (project_id, post["shortcode"])).fetchone()
+            conn.execute("""INSERT INTO outliers (project_id, shortcode, ratio, keyword, measure, typical, created_at)
+                            VALUES (?,?,?,?,'median',?,?)
+                            ON CONFLICT(project_id, shortcode) DO UPDATE SET ratio=excluded.ratio, measure='median',
+                            typical=excluded.typical""",
+                         (project_id, post["shortcode"], ratio, keyword, round(typical), db.now()))
+            new += not existed
+    return new

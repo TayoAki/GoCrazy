@@ -53,8 +53,9 @@ CREATE TABLE IF NOT EXISTS reels (
     thumb_url TEXT,
     duration REAL,
     fetched_at TEXT,
-    platform TEXT NOT NULL DEFAULT 'instagram',  -- instagram | tiktok (TikTok usernames are stored as "tt:<handle>")
+    platform TEXT NOT NULL DEFAULT 'instagram',  -- instagram | tiktok | youtube (stored as "tt:<handle>" and "yt:<handle>")
     kind TEXT NOT NULL DEFAULT 'reel',           -- reel | carousel (Instagram) | slideshow (TikTok photo mode)
+                                                 -- | video | short (YouTube; their shortcodes are "yt-<video id>")
     saves INTEGER,
     shares INTEGER,
     slides TEXT,                                 -- JSON list of slide image links, for carousels and slideshows
@@ -69,6 +70,8 @@ CREATE TABLE IF NOT EXISTS outliers (
     basis TEXT NOT NULL DEFAULT 'followers',  -- followers (passed the 5x test) | template (one account's doubled-down
                                               -- template) | replicated (a format several creators copy)
     measure TEXT NOT NULL DEFAULT 'views',    -- views | likes (Instagram hides carousel views, so the ratio is estimated from likes)
+                                              -- | median (YouTube: views / the channel's median views for that kind)
+    typical INTEGER,                          -- the channel median a "median" ratio was taken against
     created_at TEXT NOT NULL,
     PRIMARY KEY (project_id, shortcode)
 );
@@ -120,7 +123,7 @@ def init():
         conn.executescript(SCHEMA)
         # Columns added after the first release, for databases made before them.
         for table, column, kind in [("outliers", "basis", "TEXT NOT NULL DEFAULT 'followers'"),
-                                    ("outliers", "measure", "TEXT NOT NULL DEFAULT 'views'"),
+                                    ("outliers", "measure", "TEXT NOT NULL DEFAULT 'views'"), ("outliers", "typical", "INTEGER"),
                                     ("reels", "platform", "TEXT NOT NULL DEFAULT 'instagram'"),
                                     ("reels", "kind", "TEXT NOT NULL DEFAULT 'reel'"),
                                     ("reels", "saves", "INTEGER"), ("reels", "shares", "INTEGER"),
@@ -143,11 +146,22 @@ def project_settings(row):
     return {**DEFAULT_SETTINGS, **json.loads(row["settings"])}
 
 
+PLATFORM_PREFIX = {"tt:": "tiktok", "yt:": "youtube"}
+PLATFORM_LABEL = {"tiktok": "TikTok", "youtube": "YouTube"}
+
+
+def platform(username):
+    """instagram, tiktok or youtube: TikTok and YouTube accounts are stored as "tt:<handle>" and "yt:<handle>" so they
+    never mix with an Instagram namesake."""
+    return PLATFORM_PREFIX.get((username or "")[:3], "instagram")
+
+
 def handle(username):
-    """The handle people know: TikTok accounts are stored as "tt:<handle>" so they never mix with an Instagram namesake."""
-    return (username or "")[3:] if (username or "").startswith("tt:") else username
+    """The handle people know, without the platform prefix."""
+    return (username or "")[3:] if platform(username) != "instagram" else username
 
 
 def who(username):
-    """"@handle", with "(TikTok)" after a TikTok account."""
-    return "@" + handle(username) + (" (TikTok)" if (username or "").startswith("tt:") else "")
+    """"@handle", with "(TikTok)" or "(YouTube)" after an account from those platforms."""
+    label = PLATFORM_LABEL.get(platform(username))
+    return "@" + handle(username) + (f" ({label})" if label else "")

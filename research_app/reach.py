@@ -5,7 +5,9 @@ import statistics
 
 # Median likes per view of 10,448 reels across six niches: the estimate until a project has 100 reels of its own.
 LIKES_PER_VIEW = 0.0192
-KINDS = (("reel", "reels"), ("carousel", "carousels"), ("slideshow", "slideshows"))  # (kind, the setting that turns it on)
+KINDS = (("reel", "reels"), ("carousel", "carousels"), ("slideshow", "slideshows"),   # (kind, the setting that turns it on)
+         ("video", "youtube_videos"), ("short", "youtube_shorts"))
+YOUTUBE_KINDS = ("video", "short")
 
 
 def enabled_kinds(settings):

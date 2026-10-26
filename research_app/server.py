@@ -257,7 +257,7 @@ def list_outliers(project_id: int, status: str = "active", sort: str = "ratio"):
              "all": "1=1"}.get(status, "o.status <> 'dismissed'")
     with db.connect() as conn:
         rows = conn.execute(f"""
-            SELECT o.shortcode, o.ratio, o.keyword, o.status, o.basis, o.measure, r.url, r.username, r.views, r.likes, r.comments,
+            SELECT o.shortcode, o.ratio, o.keyword, o.status, o.basis, o.measure, o.typical, r.url, r.username, r.views, r.likes, r.comments,
                    r.taken_at, r.caption, r.duration, r.platform, r.kind, r.saves, r.shares, r.slides,
                    c.followers, c.full_name, c.is_verified, t.status AS teardown_status, t.data AS teardown
             FROM outliers o JOIN reels r ON r.shortcode = o.shortcode LEFT JOIN creators c ON c.username = r.username
@@ -305,7 +305,7 @@ def list_creators(project_id: int):
             outliers = conn.execute("SELECT COUNT(*), MAX(ratio) FROM outliers WHERE project_id=? AND shortcode IN "
                                     "(SELECT shortcode FROM reels WHERE username=?)", (project_id, r["username"])).fetchone()
             out.append({"username": r["username"], "handle": db.handle(r["username"]),
-                        "platform": "tiktok" if r["username"].startswith("tt:") else "instagram",
+                        "platform": db.platform(r["username"]),
                         "kinds": dict(Counter(p["kind"] for p in posts)),
                         "full_name": r["full_name"], "followers": r["followers"],
                         "is_verified": bool(r["is_verified"]), "status": r["status"], "keywords": json.loads(r["keywords"]),
@@ -374,11 +374,17 @@ def add_template_reel(project_id: int, body: TemplateIn):
             raise HTTPException(404, "Unknown reel")
         basis = "replicated" if body.basis == "replicated" else "template"
         keyword = "format copied across creators" if basis == "replicated" else f"{db.who(reel['username'])} template"
-        conn.execute("""INSERT INTO outliers (project_id, shortcode, ratio, keyword, basis, measure, created_at)
-                        VALUES (?,?,?,?,?,?,?)
+        typical = None
+        if reel["kind"] in reach.YOUTUBE_KINDS:  # a YouTube video is measured against its channel's median, as in the run
+            settings = db.project_settings(get_project(conn, project_id))
+            typical = pipeline.channel_typical(conn.execute("SELECT views, taken_at FROM reels WHERE username=? AND kind=?",
+                                                            (reel["username"], reel["kind"])).fetchall(), settings["max_age_days"])
+        ratio = round(views / (typical or reel["followers"]), 1)
+        measure = "median" if typical else "likes" if reel["kind"] == "carousel" else "views"
+        conn.execute("""INSERT INTO outliers (project_id, shortcode, ratio, keyword, basis, measure, typical, created_at)
+                        VALUES (?,?,?,?,?,?,?,?)
                         ON CONFLICT(project_id, shortcode) DO UPDATE SET status = CASE WHEN status = 'dismissed' THEN 'new' ELSE status END""",
-                     (project_id, body.shortcode, round(views / reel["followers"], 1), keyword, basis,
-                      "likes" if reel["kind"] == "carousel" else "views", db.now()))
+                     (project_id, body.shortcode, ratio, keyword, basis, measure, round(typical) if typical else None, db.now()))
     media.download_covers({body.shortcode})
     return {"ok": True}
 
@@ -574,7 +580,7 @@ def export(project_id: int):
     """Saved outliers with their teardowns, in the shape the templatizing step (playbook Phase 4) reads."""
     with db.connect() as conn:
         project = project_dict(conn, get_project(conn, project_id))
-        rows = conn.execute("""SELECT o.shortcode, o.ratio, o.keyword, o.measure, r.url, r.username, r.kind, r.views, r.likes,
+        rows = conn.execute("""SELECT o.shortcode, o.ratio, o.keyword, o.measure, o.typical, r.url, r.username, r.kind, r.views, r.likes,
                                       r.taken_at, c.followers, t.data
                                FROM outliers o JOIN reels r ON r.shortcode = o.shortcode
                                LEFT JOIN creators c ON c.username = r.username LEFT JOIN teardowns t ON t.shortcode = o.shortcode
@@ -586,6 +592,7 @@ def export(project_id: int):
             "id": f"O{i:03d}", "url": r["url"], "creator_handle": db.who(r["username"]), "post_kind": r["kind"],
             "views": r["views"], "likes": r["likes"], "creator_followers": r["followers"], "outlier_ratio": r["ratio"],
             "ratio_estimated_from_likes": r["measure"] == "likes", "posted_date": (r["taken_at"] or "")[:10],
+            "ratio_basis": "channel median" if r["measure"] == "median" else "followers", "channel_median_views": r["typical"],
             "found_via_keyword": r["keyword"],
             "teardown": {k: v["value"] for k, v in td["fields"].items()} if td else None,
             "transcript": td["transcript"]["text"] if td and td.get("transcript") else None,

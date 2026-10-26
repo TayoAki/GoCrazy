@@ -178,6 +178,7 @@ def reference_sheet(madlib):
              for k in ("verbal", "written", "visual")]
     lines += [(x.get("beat") or "Line", x.get("template"), x.get("original")) for x in madlib.get("spoken") or []]
     lines += [("On screen", x.get("template"), x.get("original")) for x in madlib.get("on_screen") or []]
+    lines += [(f"Section · {x.get('beat') or '?'}", x.get("template"), x.get("original")) for x in madlib.get("outline") or []]
     cap = madlib.get("caption") or {}
     lines.append(("Caption", cap.get("template"), cap.get("original")))
     return sheet(lines, madlib.get("slots"))

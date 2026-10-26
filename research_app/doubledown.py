@@ -15,7 +15,9 @@ A format that several creators copy is stronger evidence still: it works for dif
 account's. niche_templates() finds them: one phrase (from caption headlines, plus the cover or hook text of torn-down
 posts) or one hook frame (a torn-down hook's madlib with its blanks removed, e.g. "how to be a ___") used by at least
 MIN_CREATORS creators, where most of them (at least MIN_WINNERS, and at least half) get MIN_LIFT times their own typical
-post or more with it, and its typical lift across those creators is MIN_LIFT or more. A phrase inside one of the
+post or more with it, and its typical lift across those creators is MIN_LIFT or more. A creator with too few posts to
+know their typical one counts as a win only with a real outlier: min_ratio times their followers, from at least
+min_followers (beating a tiny account's follower count says nothing). A phrase inside one of the
 project's keywords, or holding a one-word keyword ("learning mahjong"), is the niche itself, not a format, so it is
 skipped.
 """
@@ -119,10 +121,12 @@ def niche_templates(conn, project_id):
     project = conn.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone()
     if not project:
         return []
-    kinds = reach.enabled_kinds(db.project_settings(project)) or ["reel"]
+    settings = db.project_settings(project)
+    kinds = reach.enabled_kinds(settings) or ["reel"]
     keywords = [k.lower() for k in json.loads(project["keywords"])]
     niche_words = {k for k in keywords if " " not in k}
-    is_niche = lambda p: any(p in k for k in keywords) or bool(set(p.split()) & niche_words)
+    niche_phrases = set().union(*(phrases(k) for k in keywords)) if keywords else set()  # "what i eat in a day" -> "eat day"
+    is_niche = lambda p: p in niche_phrases or any(p in k for k in keywords) or bool(set(p.split()) & niche_words)
     lpv = reach.likes_per_view(conn, project_id)
     rows = conn.execute(f"""SELECT r.shortcode, r.username, r.kind, r.views, r.likes, r.caption, r.taken_at, c.followers, t.data
                             FROM reels r JOIN project_creators pc ON pc.username = r.username AND pc.project_id = ?
@@ -164,7 +168,9 @@ def niche_templates(conn, project_id):
             lift = statistics.median(lifts) if lifts else None  # this creator's typical post of the template vs their typical post
             best = max(mine, key=lambda p: p["views"])
             creators.append({"username": username, "posts": len(mine), "lift": round(lift, 1) if lift else None,
-                             "wins": lift >= MIN_LIFT if lift is not None else best["ratio"] >= 1, "best": best})
+                             "wins": lift >= MIN_LIFT if lift is not None else
+                             best["followers"] >= settings["min_followers"] and best["ratio"] >= settings["min_ratio"],
+                             "best": best})
         winners = sum(c["wins"] for c in creators)
         lifts = [c["lift"] for c in creators if c["lift"]]
         if winners < max(MIN_WINNERS, len(creators) / 2) or (lifts and statistics.median(lifts) < MIN_LIFT):

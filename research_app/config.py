@@ -27,6 +27,13 @@ DEFAULT_SETTINGS = {
     "slideshows": False,       # TikTok photo slideshows: TikTok's Top search per keyword, then each creator's feed
     "tiktok_search_pages": 2,  # Top-search pages per keyword (about 30 results, 1 credit each)
     "tiktok_pages": 2,         # pages of a TikTok creator's feed to scan (1 credit each)
+    "youtube_videos": False,   # YouTube long videos: video search per keyword, then each channel's latest videos
+    "youtube_shorts": False,   # YouTube Shorts: each channel's latest Shorts, plus the channels behind each keyword's top Shorts
+    "youtube_search_pages": 1, # pages of video search per keyword and sort (relevance and popular, ~20 videos, 1 credit each)
+    "youtube_short_lookups": 4,  # per keyword: look up the channel of the top Shorts in Shorts search (1 credit each)
+    "youtube_pages": 2,        # pages of a channel's long videos to scan (30 videos, 1 credit each)
+    "youtube_min_ratio": 3.0,  # views / the channel's median views for that kind (subscribers predict little on YouTube)
+    "youtube_max_subscribers": 2000000,  # bigger channels are left out; min_followers is the floor
     "credit_budget": 300,      # hard stop for one research run
     "allow_long_transcription": False,  # >120 s reels cost 10 credits per started minute
     "ai_annotation": True,     # run the OpenRouter vision pass at the end of every teardown

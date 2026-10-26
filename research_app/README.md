@@ -72,6 +72,46 @@ teardown, a madlib and plans.
   text (filled from the source's madlib), image and design, a SEALCaM slide list that recreates the reference slides,
   the caption and the sound. The plan form can plan one post type only.
 
+## YouTube videos and Shorts
+
+Turn on **YouTube videos** and **YouTube Shorts** under a project's post types. Channels are stored as `yt:<handle>`
+and videos as `yt-<video id>`, so neither ever mixes with an Instagram or TikTok namesake.
+
+- **Search.** Each keyword runs YouTube video search twice, sorted by relevance and by popularity, both limited to this
+  year (`/v1/youtube/search`, about 20 videos, 1 credit each, `youtube_search_pages` pages). Shorts search hides each
+  Short's channel and date, so the top `youtube_short_lookups` Shorts per keyword are looked up (`/v1/youtube/video`,
+  1 credit each) to learn whose they are. Their channels then join the scan like any other.
+- **Scan.** Channels surfaced by the most keywords, then by the most search hits, are scanned first (`max_creators`).
+  Each one costs a channel lookup (subscribers, cached 30 days), `youtube_pages` pages of its latest long videos (30 a
+  page; the dates are YouTube's "4 months ago", so they are approximate) and one page of its latest Shorts (about 26,
+  with exact dates). Channels under `min_followers` or over `youtube_max_subscribers` subscribers (default 2M) aren't
+  scanned.
+- **The outlier test.** Subscriber counts predict views poorly on YouTube, so a YouTube outlier is measured against its
+  own channel: views ÷ the channel's median views for that kind, with long videos and Shorts measured separately. It
+  counts at `youtube_min_ratio` (default 3×), posted within `max_age_days` and at least a week ago, since a newer
+  video's views are still climbing. The median uses the channel's videos of that kind from the research window that are
+  at least a week old (all of them when it posted fewer than 5), and needs at least 5. These outliers are stored with
+  `measure = "median"` and the median they were compared with (`typical`). Base rates for planning are measured the same
+  way: the share of a niche's videos that beat their channel's median 1×, 2×, 5× and 10×.
+- **Teardown, without the video.** ScrapeCreators doesn't download YouTube videos, so a teardown (3 credits: details,
+  transcript, comments) works from what YouTube shows:
+  - the thumbnail, which is the hook of a long video (a Short's comes in its own 9:16, from `oardefault`)
+  - the three frames YouTube samples from every video
+  - the title, description, keywords and chapters
+  - the timed transcript (from the captions)
+  - the peaks of YouTube's own "most replayed" graph, with the words spoken there
+  - the top comments
+
+  The AI fills the usual card, plus the title's formula, the thumbnail's text, what the intro does and when the main
+  content starts, what keeps people watching, why people rewatch the peaks, any sponsor or plug, and what the
+  comments react to. The chapters (or, without them, eight even slices of the transcript) become the video's
+  **sections**, each with a beat and a summary; a Short has none. The madlib templates the title, the thumbnail and its
+  text, the spoken intro (a Short's whole script), the description's first line and the section outline.
+- **Plans.** A Short is written like a reel (a vertical video, with a shot list). A long video gets its packaging (title,
+  thumbnail and its text, filled from the source's madlibs), its intro written word for word, and a section outline,
+  each section with what it covers, the device that carries the viewer into the next one and its length. It gets no
+  shot list.
+
 ## Teardown (annotation)
 
 Select an outlier and press **Tear down** (about 2 credits). The app fetches the post details and transcript, downloads the video,
@@ -273,3 +313,14 @@ so keep the deployment private, for example with Vercel's Deployment Protection.
   `statistics.play_count`, `collect_count` (saves) and `author.follower_count`. Profile feeds put the slides under
   `image_post_info.images[].display_image.url_list`. TikTok slide links expire after a few weeks; the teardown fetches
   fresh ones (`/v2/tiktok/video`, 1 credit) when a download fails.
+- `/v1/youtube/search` puts video results under `videos` (with `channel.handle`, `viewCountInt`, `publishedTime`,
+  `lengthSeconds`) and Shorts under `shorts`. Shorts results carry only the id, title and views, and come back empty when
+  filtered by `uploadDate` or sorted. `/v1/youtube/search/hashtag` is the same.
+- `/v1/youtube/channel-videos` gives 30 long videos a page (`continuationToken`) with dates computed from "4 months
+  ago". `/v1/youtube/channel/shorts` gives about the 26 latest Shorts in one page, with exact `publishDate`, likes and
+  comments.
+- `/v1/youtube/video` has `chapters`, `keywords`, `durationMs`, `isPaidPromotion` and `most_replayed.markers` (100
+  buckets, each with `intensityScoreNormalized`), but no transcript text and no downloadable video (`downloadOptions`
+  is empty). The transcript is its own call (`/v1/youtube/video/transcript`: `transcript[]` with `startMs`/`endMs`).
+- Every video has `i.ytimg.com/vi/<id>/` images: `maxresdefault.jpg` (the thumbnail), `oardefault.jpg` (a Short's 9:16
+  thumbnail) and `hq720_1.jpg`–`hq720_3.jpg` (three frames YouTube samples from the video).

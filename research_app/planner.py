@@ -12,7 +12,7 @@ from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, timedelta
 
-from . import db, doubledown, llm, madlibs as madlib_lines, reach, teardown, textstyle
+from . import db, doubledown, llm, madlibs as madlib_lines, pipeline, reach, teardown, textstyle
 from .ai import SEALCAM, SEALCAM_KEYS
 from .annotate import BEATS, VOCAB
 
@@ -32,7 +32,8 @@ FUNNEL_FACTOR = {"tofu": 1.15, "mofu": 0.9, "bofu": 0.8}
 AUTHORITY_FACTOR = 0.75
 EVIDENCE_ATTRS = ["hook_pattern", "format", "carousel_type", "angle", "video_type", "complexity", "delivery"]
 SLIDE_KINDS = ("carousel", "slideshow")
-KIND_NAMES = {"reel": "Instagram reel", "carousel": "Instagram carousel", "slideshow": "TikTok photo slideshow"}
+KIND_NAMES = {"reel": "Instagram reel", "carousel": "Instagram carousel", "slideshow": "TikTok photo slideshow",
+              "video": "YouTube long video", "short": "YouTube Short (a vertical video, up to a minute, posted on YouTube)"}
 SKIP_VALUES = {None, "", "none", "unknown", "niche_specific"}
 
 RULES = """Hard rules:
@@ -48,9 +49,10 @@ RULES = """Hard rules:
    brackets, e.g. [[YOUR CLIENT RESULT: before → after, with a number]].
 3. Every post must teach or show something specific (a number, a named step, a concrete example): no fluff, no trends."""
 
-OUTLINE_SYSTEM = """You plan a week of short-form videos (Instagram Reels) for a creator, using teardowns of proven viral
-outliers from their niche. Each teardown lists what made a video work: hooks, hook pattern, angle, video type,
-delivery, format, beats, CTA.
+OUTLINE_SYSTEM = """You plan a week of posts (short-form videos, slide posts or YouTube videos) for a creator, using teardowns
+of proven viral outliers from their niche. Each teardown lists what made a post work: hooks, hook pattern, angle, video
+type, delivery, format, beats, CTA. A YouTube teardown's ratio is against its own channel's median video, not followers;
+its hook is its title and thumbnail (title_pattern, thumbnail_text, visual_hook), then its intro.
 
 """ + RULES + """
 4. One post per slot, same order, matching the slot's funnel stage, content type and CTA type.
@@ -62,9 +64,9 @@ delivery, format, beats, CTA.
 6. Keep each post's format: use exactly the format of the teardown it borrows from (if its sources differ, pick one of
    theirs). Variety across the week comes from topics, not from changing a proven format; a doubled-down template can
    fill several days.
-7. Keep each post's kind (post_kind: reel, carousel = Instagram carousel, slideshow = TikTok photo slideshow): a post
-   borrows only from teardowns of its own kind and is that kind too. A carousel or slideshow has no video format
-   (format null); it keeps its source's carousel_type instead.
+7. Keep each post's kind (post_kind: reel, carousel = Instagram carousel, slideshow = TikTok photo slideshow,
+   video = YouTube long video, short = YouTube Short): a post borrows only from teardowns of its own kind and is that kind
+   too. A carousel or slideshow has no video format (format null); it keeps its source's carousel_type instead.
 8. Use only these values: angle {angle}; video_type {video_type}; delivery {delivery}; story_type {story_type};
    format {format}; carousel_type {carousel_type}; hook_pattern {hook_pattern}; complexity {complexity}.
 
@@ -130,6 +132,39 @@ Reply with ONLY a JSON object:
              "show": "the image: what to photograph, screenshot or design", "edit": "layout and design note"}}],
  "cta": {{"mechanic": str, "line": "the exact closing line, on the last slide or in the caption"}},
  "sound": str, "caption_first_line": str, "hashtags": [3-5 strings without #],
+ "why": "why this should work, citing the teardown ids and what you reused from each",
+ "risk": "the most likely reason it underperforms, and how to avoid it",
+ "needs_from_you": ["each [[placeholder]] used, explained"]}}"""
+
+YOUTUBE_DETAIL_SYSTEM = """You write one YouTube long video for a creator from an outline, reusing the packaging and structure
+of the proven outliers it is based on (each one beat its own channel's median video several times over).
+
+""" + RULES + """
+4. Follow the outline's angle, format, delivery and hook pattern, and the slot's funnel stage, content type and CTA type.
+5. Beat labels: {beats}. CTA mechanic: {cta_mechanic}.
+6. The title and thumbnail are the hook: they decide the click. Fill the source's title madlib (its written hook) and
+   thumbnail madlib (its visual hook, and its thumbnail text from on_screen), keeping every frame word. The title promises
+   exactly what the video delivers; the thumbnail adds what the title doesn't say (a face and emotion, a result, a before
+   and after), with at most 4 words of text.
+7. The intro (about the first 45-60 seconds) is written word for word: fill the source's spoken intro madlib beat by beat
+   (its hook line, the stakes, a proof teaser, the promise, then the first section starts), keeping every frame word, the
+   order and the rhythm. Put the madlib line you filled in "template".
+8. The outline: one section per part of the video, following the source's section beats (its outline madlib), each with
+   what it covers (specifically: the steps, numbers and examples), the retention device that carries the viewer into the
+   next section (an open loop, a question, a countdown, a reveal saved for later), and about how many minutes it runs.
+   Pay off the title's promise in the last sections; mention the product where the source puts its plug, briefly.
+
+Reply with ONLY a JSON object:
+{{"title": "the video's title",
+ "madlib_source": "the teardown id whose madlib you filled",
+ "hook": {{"written": "the title", "visual": "the thumbnail: what it shows", "thumbnail_text": "at most 4 words, or null",
+          "verbal": "the first sentence spoken", "written_template": str, "visual_template": str, "verbal_template": str}},
+ "beats": [{{"label": BEAT, "template": "the madlib line this beat fills", "say": "the intro, word for word",
+            "show": "what's on screen", "edit": "editing note"}}],
+ "sections": [{{"label": BEAT, "title": "the section or chapter title", "covers": "what it covers, specifically",
+               "retention": "the device that carries the viewer into the next section", "minutes": number}}],
+ "cta": {{"mechanic": str, "line": "the exact line, and where in the video it goes"}},
+ "length_s": int, "caption_first_line": "the description's first line", "hashtags": [3-5 strings without #],
  "why": "why this should work, citing the teardown ids and what you reused from each",
  "risk": "the most likely reason it underperforms, and how to avoid it",
  "needs_from_you": ["each [[placeholder]] used, explained"]}}"""
@@ -223,7 +258,10 @@ def slots_for(followers, posts):
 
 def base_rates(project_id, kind="reel"):
     """Share of posts of one kind from in-range scanned creators that beat 1x/2x/5x/10x their follower count.
-    "reels" is how many posts that is, whatever their kind; a carousel's views are estimated from its likes."""
+    "reels" is how many posts that is, whatever their kind; a carousel's views are estimated from its likes.
+    A YouTube video or Short is measured against its channel's median for that kind instead (basis "median")."""
+    if kind in reach.YOUTUBE_KINDS:
+        return _youtube_rates(project_id, kind)
     with db.connect() as conn:
         settings = db.project_settings(conn.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone())
         lpv = reach.likes_per_view(conn, project_id)
@@ -234,9 +272,32 @@ def base_rates(project_id, kind="reel"):
                                WHERE pc.status = 'scanned' AND r.kind = ? AND c.followers BETWEEN ? AND ?""",
                             (project_id, kind, max(1, settings["min_followers"]), settings["max_followers"])).fetchall()
     ratios = [v / r["followers"] for r in rows if (v := reach.views(r, lpv))]
+    return _rates(kind, ratios, "followers")
+
+
+def _rates(kind, ratios, basis):
     n = len(ratios)
     rate = lambda t: (sum(1 for x in ratios if x >= t) / n) if n else None
-    return {"kind": kind, "estimated": kind == "carousel", "reels": n, "p1": rate(1), "p2": rate(2), "p5": rate(5), "p10": rate(10)}
+    return {"kind": kind, "estimated": kind == "carousel", "basis": basis, "reels": n,
+            "p1": rate(1), "p2": rate(2), "p5": rate(5), "p10": rate(10)}
+
+
+def _youtube_rates(project_id, kind):
+    """Each settled video from the research window of an in-range scanned channel, against that channel's median."""
+    with db.connect() as conn:
+        settings = db.project_settings(conn.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone())
+        channels = conn.execute("""SELECT pc.username FROM project_creators pc JOIN creators c ON c.username = pc.username
+                                   WHERE pc.project_id = ? AND pc.status = 'scanned' AND pc.username LIKE 'yt:%'
+                                   AND c.followers BETWEEN ? AND ?""",
+                                (project_id, max(1, settings["min_followers"]), settings["youtube_max_subscribers"])).fetchall()
+        ratios = []
+        for ch in channels:
+            posts = conn.execute("SELECT views, taken_at FROM reels WHERE username=? AND kind=?", (ch["username"], kind)).fetchall()
+            typical = pipeline.channel_typical(posts, settings["max_age_days"])
+            if typical:
+                ratios += [p["views"] / typical for p in posts if p["views"] and
+                           pipeline.MIN_AGE_DAYS <= (pipeline.age_days(p["taken_at"]) or 0) <= settings["max_age_days"]]
+    return _rates(kind, ratios, "median")
 
 
 def teardown_summaries(project_id, kinds=None):
@@ -271,6 +332,11 @@ def teardown_summaries(project_id, kinds=None):
             "words_per_second": f.get("words_per_second"),
             **({"carousel_type": f.get("carousel_type"), "slides": (f.get("stats") or {}).get("slides"),
                 "text_style": f.get("captions"), "sound": (data.get("music") or {}).get("song_name")} if kind in SLIDE_KINDS else {}),
+            **({"ratio_vs": "the channel's median " + ("Short" if kind == "short" else "long video"),
+                "title_pattern": f.get("title_pattern"), "thumbnail_text": f.get("thumbnail_text"), "intro": f.get("intro"),
+                "retention": f.get("retention"), "rewatch": f.get("rewatch"), "sponsor": f.get("sponsor"),
+                "sections": [{"beat": sc.get("beat"), "chapter": sc.get("chapter"), "minutes": round(((sc.get("end") or 0) - (sc.get("start") or 0)) / 60, 1)}
+                             for sc in data.get("scenes") or [] if sc.get("section")]} if kind in reach.YOUTUBE_KINDS else {}),
         })
     return out
 
@@ -363,8 +429,9 @@ def reference_scenes(shortcodes):
     out = {}
     for r in rows:
         data = json.loads(r["data"])
-        scenes = [{k: sc.get(k) for k in ("i", "start", "end", "cut", "flash_cuts", "beat", "said", "on_screen_text", "text_blocks", *SEALCAM_KEYS)}
-                  for sc in data.get("scenes") or [] if sc.get("S")]
+        scenes = [{k: sc.get(k) for k in ("i", "start", "end", "cut", "flash_cuts", "beat", "said", "on_screen_text", "text_blocks",
+                                          "section", "chapter", "summary", *SEALCAM_KEYS)}
+                  for sc in data.get("scenes") or [] if sc.get("S") or sc.get("section")]  # a YouTube video's sections
         if scenes:
             out[r["shortcode"]] = {"creator": "@" + data["username"], "scenes": scenes}
     return out
@@ -398,7 +465,9 @@ def source_madlibs(shortcodes, model):
                            "hooks": {k: (v or {}).get("template") for k, v in (m.get("hooks") or {}).items()},
                            "spoken": [{"beat": x.get("beat"), "template": x.get("template")} for x in m.get("spoken") or []],
                            "on_screen": [x.get("template") for x in m.get("on_screen") or []],
-                           "caption": (m.get("caption") or {}).get("template"), "slots": m.get("slots")}
+                           "caption": (m.get("caption") or {}).get("template"), "slots": m.get("slots"),
+                           **({"outline": [{"beat": x.get("beat"), "template": x.get("template")} for x in m["outline"]]}
+                              if m.get("outline") else {})}
     return out, cost
 
 
@@ -491,12 +560,15 @@ def add_shots(posts, context, model, about=""):
     slides_system = SLIDES_SHOTS_SYSTEM.format(beats=", ".join(BEATS))
 
     def one(post):
+        if post.get("post_kind") == "video":
+            return 0  # a long video gets its intro script and section outline, not a shot-by-shot list
         slides = post.get("post_kind") in SLIDE_KINDS
         script = {k: post.get(k) for k in ("title", "post_kind", "carousel_type", "format", "angle", "delivery", "complexity",
                                             "length_s", "hook", "beats", "cta") if not slides or k not in ("format", "length_s")}
         if slides:
             script["slides"] = script.pop("beats")
-        sources = {s: {**refs[s], "on_screen_madlib": (madlibs.get(s) or {}).get("on_screen")} for s in post.get("source_outliers") or [] if s in refs}
+        sources = {s: {**refs[s], "on_screen_madlib": (madlibs.get(s) or {}).get("on_screen")} for s in post.get("source_outliers") or []
+                   if s in refs and not any(sc.get("section") for sc in refs[s]["scenes"])}
         try:
             got, c = _chat_json(model, slides_system if slides else system,
                                 context + f"{'SLIDES' if slides else 'SCRIPT'}:\n{json.dumps(script, ensure_ascii=False)}\n\n"
@@ -692,11 +764,13 @@ def _generate(project_id, about, followers, start_date, posts, model, teardowns)
     def detail(slot, avoid=None, copied=None):
         post = by_slot[slot["slot"]]
         slides = post.get("post_kind") in SLIDE_KINDS
+        long_video = post.get("post_kind") == "video"
         same = [t for t in teardowns if t["post_kind"] == post.get("post_kind")]
         sources = [teardown_by_id[s] for s in post.get("source_outliers") or [] if s in teardown_by_id] or same[:3]
         templates = {s: madlibs[s] for s in post.get("source_outliers") or [] if s in madlibs}
-        d, c = _chat_json(model, (SLIDES_DETAIL_SYSTEM if slides else DETAIL_SYSTEM).format(beats=", ".join(BEATS), **vocab),
-                          context + (f"POST KIND: {KIND_NAMES[post['post_kind']]}\n" if slides else "")
+        system = SLIDES_DETAIL_SYSTEM if slides else YOUTUBE_DETAIL_SYSTEM if long_video else DETAIL_SYSTEM
+        d, c = _chat_json(model, system.format(beats=", ".join(BEATS), **vocab),
+                          context + (f"POST KIND: {KIND_NAMES[post['post_kind']]}\n" if post.get("post_kind") != "reel" else "")
                           + f"SLOT: {json.dumps(slot)}\nOUTLINE: {json.dumps(post, ensure_ascii=False)}\n\n"
                           f"SOURCE TEARDOWNS:\n{json.dumps(sources, ensure_ascii=False)}\n\n"
                           f"SOURCE MADLIBS (by teardown id):\n{json.dumps(templates, ensure_ascii=False) if templates else '(none)'}"
@@ -705,7 +779,8 @@ def _generate(project_id, about, followers, start_date, posts, model, teardowns)
                           + (f"\n\nYOUR LAST VERSION REPEATED THE SOURCE'S OWN VALUE: {'; '.join(copied)}. Keep its template (format, "
                              "structure, hook pattern, frame words), but write every tip, rule, example and joke from scratch: not "
                              "a paraphrase or a few swapped words, and all correct; use [[placeholders]] where the creator must "
-                             "supply them. Change the title if what the post teaches changes." if copied else ""), 0.6)
+                             "supply them. Change the title if what the post teaches changes." if copied else ""), 0.6,
+                          12000 if long_video else 6000)
         if slides:  # slides are kept as beats, so every check and the shot list read them the same way as a script
             d["beats"] = [{**x, "say": None} for x in d.pop("slides", None) or []]
             d["length_s"] = None
@@ -764,7 +839,8 @@ def _generate(project_id, about, followers, start_date, posts, model, teardowns)
             "model": llm.label(model), "cost": round(cost, 4), "format_mix": mix.most_common(),
             "method": ("Odds = this niche's base rate for the post's kind (share of scanned reels, carousels or slideshows "
                        "that beat each multiple of the creator's followers; a carousel's views are estimated from its "
-                       "likes, since Instagram hides them) × an evidence multiplier (1 + 2 × the average share of torn-down outliers that use "
+                       "likes, since Instagram hides them; a YouTube video or Short is measured against its own channel's "
+                       "median for that kind instead) × an evidence multiplier (1 + 2 × the average share of torn-down outliers that use "
                        "the same hook pattern, format, angle, video type, structure and delivery; +0.25 when its source "
                        "outliers median 10×+; +0.25 when a source belongs to a format several creators copy and win with) "
                        "× a funnel factor (TOFU 1.15, MOFU 0.9, BOFU 0.8; authority ×0.75). "

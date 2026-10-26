@@ -103,6 +103,37 @@ class ScrapeCreators:
                         allow_long_transcription="true" if allow_long else None)
         return (body.get("transcripts") or [None])[0]
 
+    # ---- YouTube (long videos and Shorts; every call 1 credit) ----
+
+    def yt_search(self, query, kind="videos", sort_by=None, upload_date=None, token=None):
+        """Keyword search. Video results carry their channel and date; Shorts results carry only the id, title and views
+        (and come back empty when filtered by date or sorted), so a Short's channel needs a yt_video lookup."""
+        body = self.get("/v1/youtube/search", query=query, type=kind, sortBy=sort_by, uploadDate=upload_date,
+                        continuationToken=token)
+        return body.get("shorts" if kind == "shorts" else "videos") or [], body.get("continuationToken")
+
+    def yt_channel(self, handle):
+        return self.get("/v1/youtube/channel", handle=handle, cache_max_age="30d")
+
+    def yt_channel_videos(self, handle, token=None):
+        """Long videos, newest first, 30 a page. Dates are YouTube's "4 months ago", so they are approximate."""
+        body = self.get("/v1/youtube/channel-videos", handle=handle, sort="latest", continuationToken=token)
+        return body.get("videos") or [], body.get("continuationToken")
+
+    def yt_channel_shorts(self, handle):
+        """About the 26 latest Shorts, with exact dates, likes and comments (one page, no paging)."""
+        return self.get("/v1/youtube/channel/shorts", handle=handle).get("shorts") or []
+
+    def yt_video(self, url):
+        """Full details: exact date, likes, comments, chapters, keywords, the "most replayed" graph, the thumbnail."""
+        return self.get("/v1/youtube/video", url=url, cache_max_age="30d")
+
+    def yt_transcript(self, url):
+        return self.get("/v1/youtube/video/transcript", url=url)
+
+    def yt_comments(self, url):
+        return self.get("/v1/youtube/video/comments", url=url).get("comments") or []
+
 
 def reel_from_user_item(item):
     """Normalize one item from /v1/instagram/user/reels."""
@@ -175,6 +206,41 @@ def _tiktok_images(item):
 
 def is_slideshow(item):
     return item.get("content_type") == "multi_photo" or bool((item.get("image_post_info") or {}).get("images"))
+
+
+def _utc(iso):
+    """Any ISO timestamp (YouTube mixes "Z" and "-07:00") as UTC, to the second; None stays None."""
+    if not iso:
+        return None
+    try:
+        return datetime.fromisoformat(iso.replace("Z", "+00:00")).astimezone(timezone.utc).isoformat(timespec="seconds")
+    except ValueError:
+        return None
+
+
+def yt_shortcode(video_id):
+    """YouTube ids share Instagram shortcodes' alphabet and length, so they are stored with a prefix."""
+    return f"yt-{video_id}"
+
+
+def yt_from_item(item, kind):
+    """Normalize a YouTube video or Short from search, a channel's lists or the video-details endpoint. kind: video | short.
+    The channel is stored as "yt:<handle>". The title stands in for the caption."""
+    vid = item.get("id")
+    length = item.get("lengthSeconds") or (item["durationMs"] / 1000 if item.get("durationMs") else None)
+    return {
+        "shortcode": yt_shortcode(vid), "url": f"https://www.youtube.com/{'shorts/' + vid if kind == 'short' else 'watch?v=' + vid}",
+        "views": item.get("viewCountInt"), "likes": item.get("likeCountInt"), "comments": item.get("commentCountInt"),
+        "taken_at": _utc(item.get("publishDate") or item.get("publishedTime")), "caption": item.get("title") or "",
+        "thumb_url": item.get("thumbnail") or f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg", "duration": length,
+        "platform": "youtube", "kind": kind, "saves": None, "shares": None, "slides": None, "music": None,
+    }
+
+
+def yt_handle(channel):
+    """The channel's handle without the "@", from any of the shapes YouTube returns."""
+    handle = (channel or {}).get("handle") or ""
+    return handle.lstrip("@") or None
 
 
 def slideshow_from_tiktok_item(item):

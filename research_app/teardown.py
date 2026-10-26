@@ -2,6 +2,11 @@
 
 Carousels and TikTok slideshows are torn down slide by slide instead: every slide is saved, slide 1 is the hook, each
 slide is a scene (SEALCaM, measured text), and the madlib templates the slides' text.
+
+YouTube videos and Shorts can't be downloaded, so they are torn down from what YouTube shows: the thumbnail (the hook of
+a long video), three frames YouTube samples from the video, the title, description and chapters, the timed transcript,
+the "most replayed" graph and the top comments. Chapters (or, without them, even slices of the transcript) are the
+sections, and the madlib templates the title, thumbnail, intro script and section outline.
 """
 
 import json
@@ -13,9 +18,10 @@ from PIL import Image
 from . import ai, annotate, db, llm, media, reach, textstyle
 from .annotate import field
 from .config import MEDIA, has_ffmpeg, scrapecreators_key
-from .scrapecreators import ScrapeCreators, ScrapeError, slideshow_from_tiktok_item
+from .scrapecreators import ScrapeCreators, ScrapeError, slideshow_from_tiktok_item, yt_from_item
 
 SLIDE_KINDS = ("carousel", "slideshow")
+YOUTUBE_KINDS = reach.YOUTUBE_KINDS
 MAX_SLIDES = 20
 SPONSORED = re.compile(r"#(ad|sponsored)\b|#\w*partner\b|paid partnership")
 
@@ -116,6 +122,8 @@ def start_scenes(shortcode, project_id):
         row = conn.execute("SELECT status, data FROM teardowns WHERE shortcode=?", (shortcode,)).fetchone()
         if not row or row["status"] != "done":
             raise RuntimeError("Tear the outlier down first.")
+        if json.loads(row["data"]).get("platform") == "youtube":
+            raise RuntimeError("YouTube videos can't be downloaded, so they have sections instead of scenes: re-run the AI analysis.")
         conn.execute("UPDATE teardowns SET status='running', updated_at=? WHERE shortcode=?", (db.now(), shortcode))
     threading.Thread(target=_run_scenes, args=(shortcode, project_id, json.loads(row["data"])), daemon=True).start()
 
@@ -215,6 +223,8 @@ def build(shortcode, project_id):
     client = ScrapeCreators(scrapecreators_key())
     if reel["kind"] in SLIDE_KINDS:
         return _build_slides(reel, creator, outlier, settings, siblings, previous, client, lpv)
+    if reel["kind"] in YOUTUBE_KINDS:
+        return _build_youtube(reel, creator, outlier, settings, siblings, previous, client)
     notes = []
 
     post = client.post(reel["url"])
@@ -446,6 +456,207 @@ def _build_slides(reel, creator, outlier, settings, siblings, previous, client, 
     }
     if settings["ai_annotation"] and llm.available():
         for step, name in ((apply_ai, "AI analysis"), (apply_scenes, "Scene breakdown"), (apply_madlib, "Madlib")):
+            try:
+                data = step(data, settings["ai_model"])
+            except Exception as e:
+                notes.append(f"{name} failed: {e}")
+    return data
+
+
+# ---------- YouTube long videos and Shorts ----------
+
+def _save_image(url, dest, max_width):
+    """Download an image and keep it as a JPEG at most max_width wide. False when the link answers with no image."""
+    raw = dest.with_name("_" + dest.name)
+    try:
+        if not media.download(url, raw):
+            return False
+        im = Image.open(raw).convert("RGB")
+        if im.width < 200:   # YouTube answers a missing size with a tiny grey placeholder
+            return False
+        if im.width > max_width:
+            im = im.resize((max_width, round(im.height * max_width / im.width)), Image.LANCZOS)
+        im.save(dest, "JPEG", quality=88)
+        return True
+    except OSError:
+        return False
+    finally:
+        raw.unlink(missing_ok=True)
+
+
+def _youtube_images(shortcode, video_id, kind, thumb):
+    """The thumbnail (a Short's in its own 9:16, from oardefault), a 360-wide cover from it, and the three frames YouTube
+    samples from every video (hq720_N, or the smaller hqN). Returns (thumbnail saved?, frame names)."""
+    out = media.media_dir(shortcode)
+    candidates = ([f"https://i.ytimg.com/vi/{video_id}/oardefault.jpg"] if kind == "short" else []) + \
+        [u for u in (thumb, f"https://i.ytimg.com/vi/{video_id}/maxresdefault.jpg",
+                     f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg") if u]
+    has_thumb = any(_save_image(u, out / "thumbnail.jpg", 1280) for u in candidates)
+    if has_thumb:
+        im = Image.open(out / "thumbnail.jpg")
+        im.resize((360, round(im.height * 360 / im.width)), Image.LANCZOS).save(media.cover_path(shortcode), "JPEG", quality=85)
+    frames = []
+    for k in (1, 2, 3):
+        name = f"frame_{k}.jpg"
+        if any(_save_image(f"https://i.ytimg.com/vi/{video_id}/{f}", out / name, 1280) for f in (f"hq720_{k}.jpg", f"hq{k}.jpg")):
+            frames.append(name)
+    return has_thumb, frames
+
+
+def _youtube_transcript(client, url, notes):
+    try:
+        body = client.yt_transcript(url)
+    except ScrapeError as e:
+        if e.out_of_credits:
+            raise
+        notes.append(f"Transcript unavailable: {e}")
+        return None
+    segments = [{"start": int(s["startMs"]) / 1000, "end": int(s["endMs"]) / 1000, "text": " ".join(s["text"].split())}
+                for s in body.get("transcript") or [] if (s.get("text") or "").strip()]
+    if not segments:
+        notes.append("No captions on this video, so no transcript.")
+        return None
+    return {"text": " ".join(s["text"] for s in segments), "segments": segments, "language": body.get("language")}
+
+
+def rewatch_peaks(detail, transcript, top=3):
+    """The most-replayed moments: the highest buckets of YouTube's graph, at least 5% of the video apart, skipping the
+    opening 3% (every play starts there), each with the words spoken around it."""
+    markers = (detail.get("most_replayed") or {}).get("markers") or []
+    if not markers:
+        return []
+    n = len(markers)
+    order = sorted(range(max(1, n * 3 // 100), n), key=lambda i: -(markers[i].get("intensityScoreNormalized") or 0))
+    picked = []
+    for i in order:
+        if all(abs(i - j) >= max(1, n // 20) for j in picked):
+            picked.append(i)
+        if len(picked) == top:
+            break
+    peaks = []
+    for i in sorted(picked):
+        start = markers[i]["startMillis"] / 1000
+        end = start + markers[i]["durationMillis"] / 1000
+        peaks.append({"start": round(start, 1), "end": round(end, 1),
+                      "intensity": round(markers[i].get("intensityScoreNormalized") or 0, 2),
+                      "said": ai.spoken_in(transcript, max(0, start - 3), end + 3)})
+    return peaks
+
+
+def youtube_sections(detail, transcript, duration, kind):
+    """The video's chapters, or for a long video without them, eight even slices of its transcript (at least a minute
+    each). A Short has none: its beats are labelled from the transcript."""
+    chapters = [c for c in detail.get("chapters") or [] if c.get("startSeconds") is not None]
+    if chapters:
+        bounds = [(c["startSeconds"], c.get("title")) for c in chapters]
+    elif kind == "video" and transcript and duration:
+        step = max(60, duration / 8)
+        bounds = [(round(k * step), None) for k in range(int(duration // step) + (duration % step > 1))]
+    else:
+        return []
+    out = []
+    for k, (start, title) in enumerate(bounds):
+        end = bounds[k + 1][0] if k + 1 < len(bounds) else duration
+        said = ai.spoken_in(transcript, start, end) or ""
+        out.append({"i": k + 1, "section": True, "start": start, "end": end, "chapter": title,
+                    "said": said[:700] + ("…" if len(said) > 700 else "") or None, "frames": [], "cut": True, "flash_cuts": 0})
+    return out
+
+
+def _build_youtube(reel, creator, outlier, settings, siblings, previous, client):
+    shortcode, kind, url = reel["shortcode"], reel["kind"], reel["url"]
+    video_id = shortcode[3:]
+    notes = []
+    detail = client.yt_video(url)
+    fresh = yt_from_item({**detail, "id": video_id}, kind)
+    with db.connect() as conn:  # the details carry the exact date, likes and comments the channel lists leave out
+        conn.execute("UPDATE reels SET views=COALESCE(?, views), likes=COALESCE(?, likes), comments=COALESCE(?, comments), "
+                     "taken_at=COALESCE(?, taken_at), duration=COALESCE(?, duration) WHERE shortcode=?",
+                     (fresh["views"], fresh["likes"], fresh["comments"], fresh["taken_at"], fresh["duration"], shortcode))
+    duration = fresh["duration"] or reel["duration"]
+    title = detail.get("title") or reel["caption"] or ""
+    description = detail.get("description") or ""
+    if detail.get("isPaidPromotion") or SPONSORED.search((title + " " + description).lower()):
+        notes.append("YouTube marks this video as a paid promotion (or its description says sponsored).")
+    transcript = _youtube_transcript(client, url, notes)
+    comments = []
+    try:
+        comments = [{"text": (c.get("content") or "")[:500], "likes": (c.get("engagement") or {}).get("likes") or 0,
+                     "by_creator": bool((c.get("author") or {}).get("isCreator"))}
+                    for c in client.yt_comments(url) if c.get("content")]
+        comments.sort(key=lambda c: -c["likes"])
+    except ScrapeError as e:
+        if e.out_of_credits:
+            raise
+        notes.append(f"Comments unavailable: {e}")
+    has_thumb, frames = _youtube_images(shortcode, video_id, kind, detail.get("thumbnail") or reel["thumb_url"])
+    if not has_thumb:
+        notes.append("Could not download the thumbnail.")
+    peaks = rewatch_peaks(detail, transcript)
+    sections = youtube_sections(detail, transcript, duration, kind)
+
+    text = transcript["text"] if transcript else ""
+    hook = annotate.verbal_hook(transcript)
+    keyword = outlier["keyword"] if outlier else None
+    typical = outlier["typical"] if outlier and "typical" in outlier.keys() else None
+    what = "YouTube long video" if kind == "video" else "YouTube Short"
+    fields = {
+        "stats": field({"views": fresh["views"] or reel["views"], "followers": creator["followers"] if creator else None,
+                        "typical": typical, "ratio": outlier["ratio"] if outlier else None, "posted": fresh["taken_at"] or reel["taken_at"],
+                        "likes": fresh["likes"], "comments": fresh["comments"], "duration_s": duration}, "api",
+                       f"Ratio: views ÷ the channel's median {'long video' if kind == 'video' else 'Short'} ({typical:,} views)"
+                       if typical else None),
+        "post_type": field(kind, "api", what),
+        "topic": field(None, "needs_review", f'Found via "{keyword}"; set the sub-niche' if keyword else "Set the sub-niche"),
+        "verbal_hook": hook,
+        "written_hook": field(title, "api", "The title") if kind == "video" else
+        field(None, "needs_review", "The largest text on the Short's first frame"),
+        "title_pattern": field(None, "needs_review", "The title's formula, with the specifics as blanks"),
+        "thumbnail_text": field(None, "needs_review", "The text on the thumbnail, exactly"),
+        "visual_hook": field(None, "needs_review", "One sentence: the thumbnail" if kind == "video" else "One sentence: the first frame"),
+        "hook_pattern": annotate.hook_pattern(hook["value"], title),
+        "angle": field(None, "needs_review"),
+        "video_type": annotate.video_type(text, title + "\n" + description),
+        "delivery": field(None, "needs_review"),
+        "story_type": field(None, "needs_review", "Only when delivery is storytelling"),
+        **annotate.series(hook["value"], title, siblings),
+        "content_type": field(None, "needs_review"),
+        "funnel": field(None, "needs_review"),
+        **annotate.structure(text, duration),
+        "intro": field(None, "needs_review", "What the first 30-60 s do, and when the main content starts"),
+        "retention": field(None, "needs_review", "What keeps people watching, with timestamps"),
+        "rewatch": field(None, "needs_review" if peaks else "auto",
+                         "Most replayed: " + ", ".join(f"{p['start']:.0f}-{p['end']:.0f} s" for p in peaks) if peaks else
+                         "YouTube shows no most-replayed graph for this video"),
+        "value_summary": field(None, "needs_review", "One sentence: what the viewer learns or sees"),
+        **annotate.cta(text, description),
+        "sponsor": field("paid promotion" if detail.get("isPaidPromotion") else None,
+                         "api" if detail.get("isPaidPromotion") else "needs_review", "Sponsor reads or product plugs, and where"),
+        "comments_say": field(None, "needs_review" if comments else "auto",
+                              None if comments else "No comments available"),
+        "format": field(None, "needs_review", "From the three frames and the transcript"),
+        "audio": field("original_voice" if text else "unknown", "heuristic" if text else "needs_review",
+                       "Captions show speech; listen for a music bed" if text else "No captions"),
+        "avg_shot_s": field(None, "auto", "YouTube videos aren't downloaded, so cuts aren't counted"),
+        "cuts": field(None, "auto", "YouTube videos aren't downloaded"),
+        "captions": field(None, "needs_review", "On-screen caption style, if the frames show any"),
+    }
+    if previous and previous["data"]:  # human edits survive a re-run
+        for key, old in json.loads(previous["data"])["fields"].items():
+            if old.get("source") == "human" and key in fields:
+                fields[key] = old
+
+    base = f"/media/{shortcode}/"
+    data = {
+        "shortcode": shortcode, "url": url, "username": reel["username"], "caption": title, "kind": kind, "platform": "youtube",
+        "title": title, "description": description[:5000], "keywords": (detail.get("keywords") or [])[:30],
+        "fields": fields, "transcript": transcript, "notes": notes, "credits_used": client.credits_used, "music": None,
+        "media": {"cover": base + "cover.jpg" if has_thumb else None, "thumbnail": base + "thumbnail.jpg" if has_thumb else None,
+                  "hook_frames": [], "frames": [base + f for f in frames]},
+        "scenes": sections, "rewatch": peaks, "comments": comments[:20], "created_at": db.now(),
+    }
+    if settings["ai_annotation"] and llm.available():
+        for step, name in ((apply_ai, "AI analysis"), (apply_madlib, "Madlib")):
             try:
                 data = step(data, settings["ai_model"])
             except Exception as e:

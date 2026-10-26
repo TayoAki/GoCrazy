@@ -92,10 +92,53 @@ Reply with ONLY a JSON object with exactly these keys:
 - captions: the slides' text style, e.g. "white sans on a black box, centred, 2-4 lines per slide".
 - notes: anything a human reviewer should double-check."""
 
+YOUTUBE_SYSTEM = """You analyze one YouTube video that beat its own channel's typical views (a long video or a Short) so its
+packaging and structure can be reused as a template. You get the thumbnail, three frames YouTube sampled from across the
+video, the title, the start of the description, the chapters or sections, the transcript with timestamps, the moments
+viewers rewatch most ("most replayed"), the top comments, stats, and some automatic pre-annotations (hints, not truth).
+On a long video the thumbnail and title are the hook: they decide the click. On a Short the first second is the hook.
+
+Rules:
+- Describe what is actually there. Never invent text you cannot read; use null instead.
+- For every enum field, use exactly one of the allowed values given below.
+- Be concise: one or two sentences for descriptions.
+
+Allowed values:
+""" + SYSTEM[SYSTEM.index("hook_pattern: is_it_possible"):SYSTEM.index("Beat labels for structure_pattern")] + """  Judge format from the three frames and the transcript; use "unknown" when they don't show it.
+Beat labels for sections and structure_pattern: """ + ", ".join(BEATS) + """.
+
+Reply with ONLY a JSON object with exactly these keys:
+{"topic": str, "title_pattern": str, "thumbnail_text": str|null, "written_hook": str|null, "visual_hook": str,
+ "hook_pattern": str, "angle": str, "video_type": str, "delivery": str, "story_type": str|null, "is_series": bool,
+ "series_type": str|null, "episode_marker": str|null, "content_type": str, "funnel": str, "complexity": str,
+ "structure_pattern": str, "intro": str, "retention": str, "rewatch": str|null, "value_summary": str,
+ "value_measurable": bool, "cta_type": str, "cta_mechanic": str, "cta_keyword": str|null, "cta_text": str|null,
+ "sponsor": str|null, "comments_say": str|null, "format": str, "format_evidence": str, "audio": str, "has_speech": bool,
+ "captions": str, "sections": [{"i": int, "beat": str, "summary": str}], "notes": str}
+- title_pattern: the title's formula with its specifics as blanks, e.g. "It's [adjective], But It [dramatic result] In [timeframe]".
+- thumbnail_text: the words on the thumbnail, copied exactly (null if none).
+- written_hook: on a long video the title, exactly; on a Short the largest text on the thumbnail or first frame (null if none).
+- visual_hook: on a long video the thumbnail in one sentence (subject, expression, composition, colour, any arrow or
+  circle); on a Short what its opening frame shows.
+- intro: what the first 30-60 seconds do, in order (e.g. "result first → proof teaser → stakes → promise of the method"),
+  and the second at which the main content starts.
+- retention: what keeps people watching, with timestamps (open loops, countdowns, a reveal saved for later, a cliffhanger
+  before a section, pattern interrupts).
+- rewatch: what happens at the most-replayed moments and why people go back to them (null if none are given).
+- sponsor: any sponsor read or product or app plug, where it sits and how long (null if none).
+- comments_say: what the top comments react to, in one sentence (null if there are no comments).
+- sections: one entry per SECTION listed below, in order, with its number as "i": its beat and a one-sentence summary of
+  what it covers. [] when no sections are listed.
+- structure_pattern: the sections' beats joined with " → " (repeats as STEP×3); for a Short, label its sentences.
+- has_speech: false if nobody talks (music only).
+- captions: the on-screen caption style if the frames show captions, else "none" or "unknown".
+- notes: anything a human reviewer should double-check."""
+
 ENUM_FIELDS = {"hook_pattern", "angle", "video_type", "delivery", "story_type", "series_type", "content_type", "funnel",
                "complexity", "cta_type", "cta_mechanic", "format", "audio", "carousel_type"}
 TEXT_FIELDS = {"topic", "written_hook", "visual_hook", "episode_marker", "structure_pattern", "value_summary",
-               "cta_keyword", "cta_text", "captions"}
+               "cta_keyword", "cta_text", "captions", "title_pattern", "thumbnail_text", "intro", "retention", "rewatch",
+               "sponsor", "comments_say"}
 # Values read straight from data are only filled by the AI when they are empty.
 KEEP_IF_SET = {"cta_keyword", "cta_text"}
 
@@ -131,6 +174,67 @@ def is_slides(data):
     return data.get("kind") in ("carousel", "slideshow")
 
 
+def is_youtube(data):
+    return data.get("platform") == "youtube"
+
+
+def _clock(seconds):
+    seconds = int(seconds or 0)
+    return f"{seconds // 3600}:{seconds % 3600 // 60:02d}:{seconds % 60:02d}" if seconds >= 3600 else f"{seconds // 60}:{seconds % 60:02d}"
+
+
+def _youtube_text(data, intro_seconds=180):
+    """The text half of a YouTube prompt: stats, title, description, sections, the transcript's opening (a Short's whole
+    transcript), the most-replayed moments and the top comments."""
+    f = data["fields"]
+    st = f["stats"]["value"]
+    short = data["kind"] == "short"
+    segs = (data.get("transcript") or {}).get("segments") or []
+    intro = [s for s in segs if short or s["start"] < intro_seconds]
+    sections = "\n".join(f"SECTION {sc['i']} · {_clock(sc['start'])}-{_clock(sc['end'])}"
+                          + (f' · chapter "{sc["chapter"]}"' if sc.get("chapter") else "") + f" · said: {(sc.get('said') or '')[:400]}"
+                          for sc in data.get("scenes") or []) or "(none)"
+    rewatch = "\n".join(f"{_clock(p['start'])}-{_clock(p['end'])} (intensity {p['intensity']}): {p.get('said') or '(no speech)'}"
+                         for p in data.get("rewatch") or []) or "(YouTube shows no most-replayed graph)"
+    comments = "\n".join(f"- ({c['likes']} likes{', by the creator' if c.get('by_creator') else ''}) {c['text'][:300]}"
+                          for c in (data.get("comments") or [])[:15]) or "(none)"
+    hints = {k: f[k]["value"] for k in ("verbal_hook", "hook_pattern", "video_type", "is_series", "series_type", "episode_marker",
+                                         "complexity", "cta_type", "cta_mechanic", "cta_keyword", "sponsor") if k in f}
+    return (f"YouTube {'Short' if short else 'long video'} by {data['username'].replace('yt:', '@')} · "
+            f"{st.get('followers')} subscribers · views {st.get('views')} · the channel's median {'Short' if short else 'long video'} "
+            f"gets {st.get('typical')} · {st.get('ratio')}× · likes {st.get('likes')} · comments {st.get('comments')} · "
+            f"length {_clock(st.get('duration_s'))} · posted {st.get('posted')}\n\n"
+            f"TITLE: {data.get('title')}\n\nDESCRIPTION (start):\n{(data.get('description') or '')[:1500]}\n\n"
+            f"KEYWORDS: {', '.join(data.get('keywords') or []) or '(none)'}\n\nSECTIONS:\n{sections}\n\n"
+            f"TRANSCRIPT ({'whole' if short else f'first {intro_seconds // 60} minutes'}, with timestamps):\n"
+            + ("\n".join(f"[{_clock(s['start'])}] {s['text']}" for s in intro)[:9000] or "(no captions)")
+            + f"\n\nMOST REPLAYED:\n{rewatch}\n\nTOP COMMENTS:\n{comments}\n\nAUTOMATIC PRE-ANNOTATIONS (hints):\n{json.dumps(hints)}")
+
+
+def _youtube_images(data):
+    folder = MEDIA / data["shortcode"]
+    media = data.get("media") or {}
+    parts = []
+    if media.get("thumbnail") and (folder / "thumbnail.jpg").exists():
+        parts += [("text", "THUMBNAIL:"), ("image", str(folder / "thumbnail.jpg"))]
+    frames = [folder / u.rsplit("/", 1)[-1] for u in media.get("frames") or []]
+    frames = [p for p in frames if p.exists()]
+    if frames:
+        parts.append(("text", f"FRAMES YouTube sampled from across the video ({len(frames)}, in order):"))
+        parts += [("image", str(p)) for p in frames]
+    return parts
+
+
+def _analyze_youtube(data, model):
+    result, cost = llm.ask_json(YOUTUBE_SYSTEM, [("text", _youtube_text(data))] + _youtube_images(data), model, 3000, 0.2)
+    by_i = {s.get("i"): s for s in result.get("sections") or [] if isinstance(s, dict)}
+    for sc in data.get("scenes") or []:   # the sections' beats and summaries go straight onto them
+        got = by_i.get(sc["i"]) or {}
+        sc["beat"] = got.get("beat") if got.get("beat") in BEATS else None
+        sc["summary"] = got.get("summary")
+    return result, {"cost": cost}
+
+
 def _sound(data):
     music = data.get("music") or {}
     return f'"{music["song_name"]}" by {music.get("artist_name") or "unknown"}' if music.get("song_name") else "none"
@@ -150,6 +254,8 @@ def analyze(data, model):
     """Call the model and return (parsed_json, usage). Raises on HTTP or parse errors."""
     if is_slides(data):
         return _analyze_slides(data, model)
+    if is_youtube(data):
+        return _analyze_youtube(data, model)
     fields = data["fields"]
     hints = {k: fields[k]["value"] for k in ("verbal_hook", "hook_pattern", "video_type", "is_series", "series_type",
                                               "episode_marker", "complexity", "cta_type", "cta_mechanic", "cta_keyword",
@@ -365,12 +471,43 @@ Reply with ONLY a JSON object:
  "spoken": [{"beat": str, "original": str, "template": str}],
  "on_screen": [{"original": str, "template": str}],
  "caption": {"original": str|null, "template": str|null},
- "slots": [{"name": str, "type": str, "rule": str, "example": str}]}"""
+ "outline": [{"beat": str, "original": str, "template": str}],
+ "slots": [{"name": str, "type": str, "rule": str, "example": str}]}
+"outline" is only for a YouTube long video (its sections); otherwise []."""
+
+YOUTUBE_MADLIB = """POST: a YouTube {what}. Template it like this:
+- hooks.written: {written}
+- hooks.visual: the {visual}, described with its specifics as slots (who, expression, the object, the colours).
+- on_screen: the thumbnail's text as one entry ([] if it has none).
+- hooks.verbal: the first spoken line. spoken: {spoken}, beat by beat.
+- caption: the description's first line.
+- outline: {outline}
+"""
 
 
 def madlib(data, model):
     """Fill-in-the-blank templates of the reel's own script, hooks, on-screen text and caption. Returns (madlib, usage)."""
     f = {k: v.get("value") for k, v in data["fields"].items()}
+    if is_youtube(data):
+        short = data["kind"] == "short"
+        note = YOUTUBE_MADLIB.format(
+            what="Short" if short else "long video",
+            written="the largest text on its first frame (null if none)" if short else "the title",
+            visual="opening frame" if short else "thumbnail",
+            spoken="the whole script" if short else "the intro (about the first 60 seconds)",
+            outline="[] (a Short has no sections)" if short else
+            "one entry per SECTION below: beat, the chapter title (or a 3-6 word summary of the section) as original, and its template")
+        sections = "\n".join(f"SECTION {sc['i']} [{sc.get('beat') or '?'}] chapter: {sc.get('chapter') or '(none)'} · "
+                              f"summary: {sc.get('summary') or '(none)'}" for sc in data.get("scenes") or [])
+        segs = (data.get("transcript") or {}).get("segments") or []
+        script = "\n".join(f"[{_clock(s['start'])}] {s['text']}" for s in segs if short or s["start"] < 75)
+        text = (note + f"\nTITLE: {data.get('title')}\nTHUMBNAIL TEXT: {f.get('thumbnail_text') or '(none)'}\n"
+                f"THUMBNAIL: {f.get('visual_hook') or '(unknown)'}\nTITLE PATTERN: {f.get('title_pattern') or '(unknown)'}\n"
+                f"BEATS: {f.get('structure_pattern') or 'unknown'}\n\n{'SCRIPT' if short else 'INTRO'} (with timestamps):\n"
+                f"{script[:6000] or '(no captions)'}\n\nSECTIONS:\n{sections[:4000] or '(none)'}\n\n"
+                f"DESCRIPTION (first line): {(data.get('description') or '').split(chr(10))[0][:300]}")
+        result, cost = llm.ask_json(MADLIB_SYSTEM, [("text", text)], model, 8000, 0.2)
+        return result, {"cost": cost}
     scenes = "\n".join(f"SCENE {sc['i']} [{sc.get('beat') or '?'}] said: {sc.get('said') or '(nothing)'} | on screen: "
                        f"{sc.get('on_screen_text') or '(none)'}" for sc in data.get("scenes") or [])
     slides = (f"POST: {'a TikTok photo slideshow' if data['kind'] == 'slideshow' else 'an Instagram carousel'} of "

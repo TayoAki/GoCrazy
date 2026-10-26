@@ -11,7 +11,7 @@ BEATS = ["HOOK", "CONTEXT", "PROMISE", "NAME_METHOD", "STEP", "EXAMPLE", "PROOF"
          "RESULT", "LESSON", "RECAP", "LOOP", "CTA"]
 
 VOCAB = {
-    "post_type": ["reel", "carousel", "photo"],
+    "post_type": ["reel", "carousel", "photo", "video", "short"],
     # The eight carousel types (playbook A10, video #10); TikTok photo slideshows use them too.
     "carousel_type": ["tutorial", "do_dont", "tip_hack", "storytelling", "transformation", "problem_solution", "list", "types"],
     "hook_pattern": ["is_it_possible", "time_ago", "did_you_know_if", "levels_of", "smart_vs_dumb", "good_better_best",
