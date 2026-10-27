@@ -65,7 +65,8 @@ class Post:
         if key:
             self.photos.append((key, brief, bool(found)))
         if found:
-            return f'<div class="{cls} filled" style="{style}"><img src="{data_uri(found)}"></div>'
+            focus = f' style="object-position:{html.escape(spec["focus"])}"' if spec.get("focus") else ""
+            return f'<div class="{cls} filled" style="{style}"><img src="{data_uri(found)}"{focus}></div>'
         return f'<div class="{cls}" style="{style}"><div><b>PHOTO</b>{html.escape(brief)}</div></div>'
 
     def screen(self, path, brief):
@@ -115,10 +116,11 @@ body{{width:{w}px;height:{h}px;overflow:hidden;font-family:Inter,sans-serif;colo
     # Slide types -------------------------------------------------------------------------------------------------
 
     def cover(self, i, s):
-        t = self.theme
+        t, shade = self.theme, float(s.get("shade", 0.55))
         css = f"""
         body{{padding:0;color:#fff;background:#222}}
-        .shade{{position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,.55) 0%,rgba(0,0,0,.15) 45%,rgba(0,0,0,.6) 100%)}}
+        .shade{{position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,{shade}) 0%,rgba(0,0,0,{shade * .3:.2f}) 45%,
+               rgba(0,0,0,{min(shade + .1, .9):.2f}) 100%)}}
         .wrap{{position:absolute;inset:0;display:flex;flex-direction:column;padding:150px 70px 82px}}
         .t{{font:900 {s.get('title_size', 112)}px/1.02 Inter;letter-spacing:-3px;text-transform:uppercase;text-wrap:balance}}
         .t .em{{background:{t['accent']};padding:0 14px;border-radius:12px;box-decoration-break:clone;-webkit-box-decoration-break:clone}}

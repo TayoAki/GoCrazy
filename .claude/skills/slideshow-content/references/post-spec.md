@@ -39,6 +39,10 @@ Wherever a slide takes a photo: `{"key": "greek-yogurt", "brief": "a Greek yogur
   brief, so the person sees exactly what to shoot and where it goes. `render.py` lists the empty spots.
 - Write the brief as a shot: the real product, how it's held or placed, what must be readable ("label to camera").
 - Keys are file names: lowercase, hyphens, unique per photo. Reuse a key to reuse a photo.
+- `"focus": "50% 20%"` moves the crop (CSS object-position: across, then down). Photos fill their spot and are
+  cropped to it, so aim the focus at the label or the food.
+- Fill spots with the person's photos, or with real licensed ones from `scripts/find-photos.py` (never generated
+  images). See SKILL.md step 8.
 
 ## Slide types
 
@@ -50,7 +54,8 @@ Wherever a slide takes a photo: `{"key": "greek-yogurt", "brief": "a Greek yogur
  "save": true, "title_size": 112}
 ```
 Full-bleed photo with a dark gradient, the title big in white capitals at the top, the subtitle and the save line at the
-bottom. Lower `title_size` (px) when a long title runs past four lines.
+bottom. Lower `title_size` (px) when a long title runs past four lines. `shade` (0–0.9, default 0.55) darkens the top
+of the gradient; raise it when the photo is busy behind the title (a collage needs about 0.8).
 
 ### `photo`: full-bleed photo, white text over it
 ```json

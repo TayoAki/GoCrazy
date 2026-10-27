@@ -1,6 +1,6 @@
 ---
 name: slideshow-content
-description: Research the TikTok photo slideshows and Instagram carousels that outperform in a niche, find the proven formulas (plays ÷ followers, saves per 1,000 plays), pick one, and build ONE post that combines the version of each element that won, with every number checked against a primary source and a written case for why it should work. Then render it as ready-to-post 3:4 slide templates whose photo spots the person replaces with their own photos. Use this whenever someone wants slideshow or carousel content for an app, brand or creator, e.g. "what slides should we make to market X", "find the outlier slideshows in this niche", "proven formulas for this niche", "recreate this outlier", "combine what works into one post", "make the slide templates", "a carousel for my app", even if they never say "slideshow". For talking-head reel, TikTok or Shorts scripts use short-form-content instead.
+description: Research the TikTok photo slideshows and Instagram carousels that outperform in a niche, find the proven formulas (plays ÷ followers, saves per 1,000 plays), pick one, and build ONE post that combines the version of each element that won, with every number checked against a primary source and a written case for why it should work. Then render it as ready-to-post 3:4 slides, with photo spots filled by real, licensed product photos found online (never generated) until the person's own photos replace them. Use this whenever someone wants slideshow or carousel content for an app, brand or creator, e.g. "what slides should we make to market X", "find the outlier slideshows in this niche", "proven formulas for this niche", "recreate this outlier", "combine what works into one post", "make the slide templates", "a carousel for my app", "put real product photos in the slides", even if they never say "slideshow". For talking-head reel, TikTok or Shorts scripts use short-form-content instead.
 ---
 
 # Slideshow content: from outliers to a post that's ready to shoot
@@ -27,7 +27,7 @@ briefs/<slug>/
   research/refs.md        every winning post, readable (step 3)
   research/formulas.md    the formulas ranked, and the patterns across all winners (step 3)
   post.json               the slides (step 6)
-  photos/                 empty until the person shoots; photos/<key>.jpg fills a spot
+  photos/                 photos/<key>.jpg fills a spot (found photos until the person shoots), SOURCES.md credits
   assets/                 screenshots for the app slide
   out/slide_01.png …      the slides, and out/contact.jpg with all of them at a glance
 ```
@@ -234,7 +234,46 @@ draws correction comments for as long as people find it, and the product's slide
 Generic values won't match every brand. Tell the person to check each one against the label in their photo, and to
 use the label's number if they differ.
 
-## 8. Render and review
+## 8. Fill the photo spots with real photos, render and review
+
+The best photos are the person's own phone photos of the exact products, because the most-saved references use them
+and the label in shot matches the slide. Until they shoot (or when they can't), fill the spots with **real, licensed
+photos found online. Never generated images.** This follows Editor V1's sourcing rules: find the thing's own picture,
+choose it by looking, and record its source and licence.
+
+```bash
+python3 $S/find-photos.py search "greek yogurt nonfat plain" briefs/<slug> --key greek-yogurt --src openfoodfacts
+#   -> briefs/<slug>/photo-search/greek-yogurt.jpg, a numbered sheet with licence and size. Look at it, then:
+python3 $S/find-photos.py get briefs/<slug> --key greek-yogurt 7    # -> photos/greek-yogurt.jpg + photos/SOURCES.md
+python3 $S/find-photos.py collage briefs/<slug> --key cover --cols 3 greek-yogurt beef-93 skim-milk popcorn light-mayo
+```
+
+**Sources:**
+- `openfoodfacts`: real packaged products (US first), mostly shoppers' phone photos, with a photo of each
+  nutrition label (`find-photos.py label …`). Licence CC BY-SA 3.0.
+- `commons`: Wikimedia Commons, including many CC0 Unsplash and Pexels photos. Best for unbranded food and scenes
+  like a grocery haul. It rate-limits busy addresses for minutes at a time.
+- `openverse`: wider, but slow and sometimes down.
+
+**Picking rules,** from filling the Weight Class swaps post:
+- **Match the slide's serving** where you can: a 1 oz bag for "1 oz", one-cup cartons for "1 cup".
+- **No number on the package may contradict the slide.** Skip a yogurt with a "150 calories" badge on a slide that
+  says 173.
+- **Prefer store brands.** If a famous brand's label differs from the slide by more than label rounding, pick
+  another. Lay's Classic is labelled 160 calories per ounce against the slide's 149, so it was swapped for Kettle
+  (150).
+- **A same-brand pair** shows the difference best: Signature Farms 80/20 next to Signature Farms 93/7.
+- **At least about 800 px** on the long side. `get` warns when a photo will look soft.
+- **Covers:** for a cover with no photo yet, `collage` makes one from the post's own product photos.
+- **Crops:** use `"focus": "50% 20%"` on a photo spot to move the crop, and `"shade": 0.8` on a busy cover to keep
+  the title readable.
+
+**Credits and risks to tell the person:**
+- **Credits:** `photos/SOURCES.md` lists every photo's source and licence. CC BY and CC BY-SA need a credit in the
+  caption ("Photos: Open Food Facts contributors, CC BY-SA 3.0"). CC BY-SA also asks that what's made from the
+  photo is shared under the same licence.
+- **Brands:** showing named brands from a brand account is comparative advertising, so the numbers must be right for
+  what's pictured. Their own photos avoid both issues; say so.
 
 ```bash
 python3 $S/render.py briefs/<slug>       # out/slide_NN.png + out/contact.jpg; lists photo spots still empty
