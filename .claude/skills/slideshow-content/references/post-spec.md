@@ -52,6 +52,16 @@ Wherever a slide takes a photo: `{"key": "greek-yogurt", "brief": "a Greek yogur
 Full-bleed photo with a dark gradient, the title big in white capitals at the top, the subtitle and the save line at the
 bottom. Lower `title_size` (px) when a long title runs past four lines.
 
+### `photo`: full-bleed photo, white text over it
+```json
+{"type": "photo", "photo": {"key": "cucumber", "brief": "one whole cucumber, sliced, in a white bowl, from above"},
+ "title": "CUCUMBER", "lines": ["1 whole cucumber · 301 g"], "stats": [["45", "CAL"], ["2 G", "FIBER"]],
+ "verdict": "The whole thing: *45 calories*", "text_at": "top"}
+```
+How most winning slideshows are built: the photo fills the slide and the text sits on it, with a dark gradient
+for legibility. Text goes at the top (default) or the bottom (`"text_at": "bottom"`); put it where the photo is
+empty. All text fields are optional. A slide with number boxes gets the source line.
+
 ### `compare`: one swap, before above after
 ```json
 {"type": "compare", "title": "FRUIT YOGURT →\nGREEK YOGURT",

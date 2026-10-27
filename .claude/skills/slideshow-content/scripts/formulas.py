@@ -33,6 +33,16 @@ REPO = find_repo()
 DB = REPO / "data" / "research.db"
 MEDIA = REPO / "data" / "media"
 SLIDE_KINDS = ("slideshow", "carousel")
+PROMO = re.compile(r"#(ad|ads|sponsored|partner|paidpartnership|gifted)\b|paid partnership|\buse (my )?code\b|"
+                   r"\bcode [A-Z0-9]{3,}\b|#use[a-z]+", re.I)
+METRICS = """How to read these numbers:
+- Plays ÷ followers: a post's plays divided by its creator's followers. A 1,000-follower account whose post got 50,000
+  plays scores 50×. An outlier scores 5× or more. Instagram carousels show no plays, so theirs are estimated from likes.
+- Median: the middle value across a formula's posts, so one freak hit can't carry a formula.
+- Saves per 1,000 plays: how many of every thousand viewers saved the post to keep. It's the sign a post was useful,
+  so formulas are ranked by it. TikTok shows saves; Instagram doesn't.
+- A formula is proven when 3+ posts from 2+ creators won with it. With 2 posts it's a lead; with one creator, it's
+  that creator's template."""
 
 
 def connect():
@@ -88,10 +98,21 @@ def posts(conn, project_id):
             "cover_template": (hooks.get("written") or {}).get("template"), "type": f.get("carousel_type"),
             "topic": f.get("topic"), "value": f.get("value_summary"), "style": f.get("captions"),
             "cta": f.get("cta_mechanic"), "cta_text": f.get("cta_text"), "sound": sound,
-            "sponsored": any("ponsor" in n or "aid partnership" in n for n in d.get("notes") or []),
+            "sponsored": any("ponsor" in n or "aid partnership" in n for n in d.get("notes") or [])
+                         or bool(PROMO.search(r["caption"] or "")),
+            "app_account": bool(re.search(r"app|\bai\b", handle(r["username"]).lower())),
             "caption": (r["caption"] or "").strip(),
             "slide_text": [(s.get("on_screen_text") or "").strip() for s in d.get("scenes") or []],
         })
+    # A paid campaign posts the same caption from many accounts: the same opening line from 2+ creators is one.
+    opening = lambda c: re.sub(r"\W+", " ", c.lower()).strip()[:60]
+    creators = {}
+    for i in out:
+        if len(opening(i["caption"])) >= 25:
+            creators.setdefault(opening(i["caption"]), set()).add(i["handle"])
+    for i in out:
+        i["campaign"] = len(creators.get(opening(i["caption"]), ())) > 1
+        i["promo"] = i["sponsored"] or i["campaign"] or i["app_account"]
     return out
 
 
@@ -110,7 +131,8 @@ def refs(args):
         lines.append(f"{i['url']} · {i['followers']} followers · {est}{i['plays']} plays · "
                      f"{i['saves_per_1k'] if i['saves_per_1k'] is not None else '-'} saves per 1,000 · "
                      f"{i['slides'] or '?'} slides · {i['aspect'] or '?'} · posted {i['posted']}"
-                     + (" · SPONSORED" if i["sponsored"] else "") + (f" · found as {i['basis']}" if i["basis"] != "followers" else "")
+                     + (" · SPONSORED" if i["sponsored"] else "") + (" · CAMPAIGN (same caption on other accounts)" if i["campaign"] else "")
+                     + (" · APP ACCOUNT" if i["app_account"] else "") + (f" · found as {i['basis']}" if i["basis"] != "followers" else "")
                      + (" · TINY ACCOUNT: the ratio means little, judge it by saves" if (i["followers"] or 0) < 1000 else ""))
         if i["torn_down"]:
             lines.append(f"- cover: {i['cover']!r} · template: {i['cover_template']!r} · type: {i['type']}")
@@ -132,7 +154,7 @@ def med(values):
 def stats(args):
     conn = connect()
     items = {i["shortcode"]: i for i in posts(conn, args.project)}
-    lines = []
+    lines = [f"# Formulas, project #{args.project}", "", METRICS, ""]
     if args.groups:
         groups = json.loads(Path(args.groups).read_text())
         lines += ["## Formulas", "",
@@ -149,7 +171,9 @@ def stats(args):
             best = max(members, key=lambda m: m["saves_per_1k"] or -1)
             rows.append((med(m["saves_per_1k"] for m in members) or -1, name, members, best))
         for saves, name, members, best in sorted(rows, key=lambda r: r[0], reverse=True):
-            lines.append(f"| {name} | {len(members)} | {len({m['handle'] for m in members})} | "
+            creators = len({m["handle"] for m in members})
+            proof = "" if len(members) >= 3 and creators >= 2 else " (a lead)" if creators >= 2 else " (one creator)"
+            lines.append(f"| {name}{proof} | {len(members)} | {creators} | "
                          f"{med(m['ratio'] for m in members)}× | {saves if saves >= 0 else '-'} | "
                          f"{med(m['plays'] for m in members):,.0f} | {best['handle']} ({best['saves_per_1k']}) |")
         lines.append("")
@@ -167,7 +191,10 @@ def stats(args):
               f"- Sounds under 2+ winners: " + ("; ".join(f"{s} ({n})" for s, n in sounds.most_common() if n > 1) or "none"),
               f"- Ask: {Counter(i['cta'] for i in done).most_common(6)}",
               f"- Type: {Counter(i['type'] for i in done).most_common(8)}",
-              f"- Sponsored: {sum(i['sponsored'] for i in done)}",
+              f"- Promotions: {sum(i['sponsored'] for i in done)} marked as ads or with ad hashtags or codes, "
+              f"{sum(i['campaign'] for i in done)} in campaigns (same caption on several accounts), "
+              f"{sum(i['app_account'] for i in done)} from app accounts. They show a brand can ride a format; "
+              f"weigh them apart from creators' own posts",
               f"- Median saves per 1,000 (TikTok): {med(i['saves_per_1k'] for i in items.values())}", ""]
     text = "\n".join(lines)
     if args.out:
@@ -188,7 +215,7 @@ def sheet(args):
         ims = [im.resize((round(im.width * h / im.height), h)) for im in ims]
         r = conn.execute("SELECT r.username, o.ratio FROM reels r LEFT JOIN outliers o ON o.shortcode = r.shortcode "
                          "WHERE r.shortcode = ?", (sc,)).fetchone()
-        rows.append((f"{handle(r['username']) if r else sc} · {r['ratio'] if r and r['ratio'] else '?'}×", ims))
+        rows.append((f"{handle(r['username']) if r else sc} · {r['ratio'] if r and r['ratio'] else '?'}x", ims))
     if not rows:
         raise SystemExit("Nothing to draw")
     label = 34

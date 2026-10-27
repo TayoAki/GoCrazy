@@ -10,7 +10,9 @@ No reference gets everything right. Look for the split between reach and saves:
 - The post that **travelled furthest** (highest plays ÷ followers) usually has the cover and hook to copy.
 - The post that was **saved most** (saves per 1,000 plays) usually has the content and number format to copy.
 
-When they're different posts, take the cover from the first and the slides from the second. In the Weight Class run,
+When they're different posts, take the cover from the first and the slides from the second. When one post leads on
+both, keep what it does and fix its weak spots (a cover you shouldn't copy, numbers off the source, a missing save ask)
+from the other references and the niche-wide patterns. In the Weight Class run,
 @uplejaa's "Easy swaps that ACTUALLY save calories" reached 159× her followers but was saved 5 times per 1,000 plays
 (calories per 100 g). @laurenjoyke11y's per-serving numbers were saved 40 times per 1,000 but reached 25×. The post
 used uplejaa's cover words with laurenjoyke11y's numbers.
@@ -61,8 +63,9 @@ and appears once, at the end, as the answer to a question the post raises: "wher
 
 ## Calling things by what they are
 
-- A formula backed by one creator is that creator's template, not the niche's. Say "a lead" for anything resting on
-  two to four posts.
-- Sponsored posts prove a brand can ride the format. Count them, but don't let them set the medians.
+- A formula backed by one creator is that creator's template, not the niche's. Two posts make a lead. Three or four
+  make a proven but thin formula, so say how many posts back it.
+- Promotions (ads, campaigns posting one caption from many accounts, app accounts) prove a brand can ride the
+  format. Count them, but don't let them set the medians.
 - Accounts under 1,000 followers make enormous ratios from small numbers (25 followers, 107K plays = 4,290×). Judge
   them by saves.

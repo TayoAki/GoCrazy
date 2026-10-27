@@ -21,6 +21,7 @@ from pathlib import Path
 SKILL = Path(__file__).resolve().parent.parent
 FONTS = SKILL / "assets/fonts"
 PHOTO_EXT = (".jpg", ".jpeg", ".png", ".webp")
+TYPES = ("cover", "photo", "compare", "item", "list", "app")
 DEFAULT_THEME = {"accent": "#2340B0", "muted": "#5B6475", "ink": "#121417", "paper": "#FFFFFF", "soft": "#F3F4F7",
                  "no": "#9A3B3B", "yes": "#1D7A46", "faint": "#8A909A"}
 
@@ -210,12 +211,46 @@ body{{width:{w}px;height:{h}px;overflow:hidden;font-family:Inter,sans-serif;colo
                 + (f'<div class="sub">{text(s.get("subtitle"))}</div>' if s.get("subtitle") else "") + self.save_line(s))
         return self.page(i, body, css)
 
+    def photo_slide(self, i, s):
+        """Full-bleed photo with white text over it, the way most slideshows are built: a title at the top (or the
+        bottom), short lines, number boxes and a verdict."""
+        t = self.theme
+        bottom = s.get("text_at", "top") == "bottom"
+        css = f"""
+        body{{padding:0;color:#fff;background:#222}}
+        .shade{{position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,{'.15' if bottom else '.6'}) 0%,
+               rgba(0,0,0,.1) 40%,rgba(0,0,0,{'.7' if bottom else '.35'}) 100%)}}
+        .wrap{{position:absolute;inset:0;display:flex;flex-direction:column;padding:110px 64px 70px;
+              justify-content:{'flex-end' if bottom else 'flex-start'};text-shadow:0 2px 12px rgba(0,0,0,.35)}}
+        .t{{font:900 {s.get('title_size', 76)}px/1.04 Inter;letter-spacing:-2px;text-wrap:balance}}
+        .t .em{{background:{t['accent']};padding:0 12px;border-radius:10px;text-shadow:none}}
+        .ls{{margin-top:22px;font:700 40px/1.3 Inter}}
+        .boxes{{display:flex;gap:14px;flex-wrap:wrap;margin-top:24px;text-shadow:none}}
+        .v{{margin-top:auto;font:900 46px/1.15 Inter;text-wrap:balance}}
+        .v .em{{background:{t['accent']};padding:0 10px;border-radius:8px;text-shadow:none}}
+        .wrap.bottom .v{{margin-top:22px}}
+        .src{{color:rgba(255,255,255,.75);text-align:left;text-shadow:none}}
+        .save{{color:#fff;text-align:left;margin-top:18px}}
+        .count{{color:rgba(255,255,255,.85)}}
+        """
+        boxes = "".join(f'<div class="box">{text(v)}<small>{text(u)}</small></div>' for v, u in s.get("stats", []))
+        lines = "".join(f"<div>{text(x)}</div>" for x in s.get("lines", []))
+        body = (self.photo(s.get("photo"), "photo", "position:absolute;inset:0;border-radius:0;border:none")
+                + f'<div class="shade"></div><div class="wrap{" bottom" if bottom else ""}">'
+                + (f'<div class="t">{text(s.get("title"))}</div>' if s.get("title") else "")
+                + (f'<div class="ls">{lines}</div>' if lines else "")
+                + (f'<div class="boxes">{boxes}</div>' if boxes else "")
+                + (f'<div class="v">{text(s.get("verdict"))}</div>' if s.get("verdict") else "")
+                + self.source_line(s, default=bool(boxes)) + self.save_line(s) + "</div>")
+        return self.page(i, body, css)
+
     def pages(self):
         out = []
         for i, s in enumerate(self.spec["slides"], 1):
-            make = getattr(self, s.get("type", "item"), None)
-            if s.get("type") not in ("cover", "compare", "item", "list", "app") or not make:
-                raise SystemExit(f"Slide {i}: unknown type {s.get('type')!r} (cover, compare, item, list, app)")
+            kind = s.get("type")
+            make = getattr(self, "photo_slide" if kind == "photo" else kind, None) if kind in TYPES else None
+            if not make:
+                raise SystemExit(f"Slide {i}: unknown type {kind!r} ({', '.join(TYPES)})")
             out.append(make(i, s))
         return out
 

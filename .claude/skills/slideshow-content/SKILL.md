@@ -9,9 +9,9 @@ This skill turns a niche's winning slideshows into one post: research → proven
 built from the parts that won → every number checked → slide templates with photo spots → a write-up of why it
 should work and how to post it.
 
-It was built on a real run for Weight Class, a calorie-tracking app: nearly 100 winning slideshows and carousels, food swaps chosen as the
-most-saved formula, and "5 easy swaps that actually save calories" built from seven references. That post is the
-worked example in `assets/example/`.
+It was built on a real run for Weight Class, a calorie-tracking app. The research found nearly 100 winning
+slideshows and carousels, and food swaps was the most-saved formula. The post, "5 easy swaps that actually save
+calories", was built from seven references and is the worked example in `assets/example/`.
 
 Everything runs from the repository that holds `research_app/` (the outlier research app). Scripts are in this
 skill's `scripts/` folder. Below, `$S` stands for that folder, e.g. `.claude/skills/slideshow-content/scripts`.
@@ -52,7 +52,14 @@ page, social profiles) and write `product.md`.
   - how to join or book (the link)
   - what a newcomer should know ("no experience needed, sets provided")
 
-Ask the person for whatever you can't find. Don't fill gaps with guesses.
+Look in the repo for what's already known and made before you search the web:
+- `briefs/` (earlier posts and plans for this product)
+- the project's week plans in the research app (`curl -s localhost:8000/api/projects/<id>/plans`). Each plan's
+  `input.about` is the team's own description of the product.
+
+Earlier posts tell you what not to repeat. If you can't reach the product's pages, build `product.md` from those
+sources, mark each line as the team's claim, leave unverified claims (like the price) off the slides, and ask the
+person for the store link. Ask for whatever else you can't find. Don't fill gaps with guesses.
 
 Sites go stale: in the Weight Class run the site still said "on its way" while the app was live. When the sources
 disagree, say so.
@@ -121,9 +128,10 @@ Group the posts into **formulas**. A formula is a promise plus the way each slid
 - "Fast-food orders": one chain per slide, the order and its macros
 - "What I eat in a day"
 
-A formula is proven when **at least two different creators** won with it. One creator repeating a format shows it
-works for them; several show it works for the niche. Write `groups.json` (`{"Food swaps": ["<shortcode>", …]}`) and
-run:
+A formula is **proven** when **3+ posts from 2+ creators** won with it. One creator repeating a format shows it works
+for them; several show it works for the niche. With only two posts it's a lead: one borderline post more or less can
+move it from first place to fifth. Group every post, even into "other", so nothing is quietly left out. Write
+`groups.json` (`{"Food swaps": ["<shortcode>", …]}`) and run:
 
 ```bash
 python3 $S/formulas.py stats <id> groups.json --out briefs/<slug>/research/formulas.md
@@ -131,23 +139,29 @@ python3 $S/formulas.py stats <id> groups.json --out briefs/<slug>/research/formu
 
 **Rank formulas by median saves per 1,000 plays, then by the number of creators.** Plays show reach, which one lucky
 post can get. Saves show that people found it useful enough to keep, which is the feeling a product needs attached to
-it. `stats` also prints the patterns across every winner: slides, shape, cover length, covers with a number, sound,
-the ask, sounds used by several winners. Those patterns feed step 5.
+it.
 
-When you explain the metrics, say what they are in plain words. People ask.
+`stats` marks leads and one-creator formulas. It also prints the patterns across every winner: slides, shape, cover
+length, covers with a number, sound, the ask, sounds used by several winners, and promotions. Promotions are posts
+marked as ads, campaigns posting one caption from many accounts, and app accounts. They prove a brand can ride a
+format, but weigh them apart from creators' own posts. Those patterns feed step 5.
+
+`formulas.md` opens with the metrics in plain words. Use those words when you explain them, because people ask:
 - **Plays ÷ followers:** a 1,000-follower account whose post got 50,000 plays scores 50×.
 - **The median across a formula's winners:** the middle one, so one freak hit can't carry a formula.
 - **Saves per 1,000 plays:** how many of every thousand viewers kept it. TikTok shows saves; Instagram doesn't.
 
 ## 4. Pick one formula
 
-Take the most-saved formula that also passes these:
+Take the most-saved **proven** formula that also passes these. A lead can win only if it's far ahead. Then say how
+thin it is and name the proven runner-up, so the person can choose the safer bet.
 1. **Room for the product.** The product can be the honest answer to something the post raises (where the numbers
    come from, how to log it), not an ad bolted on.
 2. **Every number can be checked now** from a primary source (step 7). Weight Class's fast-food formula had more
    winners, but the chains' nutrition pages couldn't be read, so swaps went first, with numbers from USDA.
 3. **Makeable in a day** with phone photos and no filming.
 4. **Not owned by competitors' own accounts.**
+5. **Not already made or planned** (step 1).
 
 Show the person the references. For each, give its slides side by side (`formulas.py sheet <shortcode> … --out
 sheet.jpg`), plays, followers, ratio, saves per 1,000, slide count and what its numbers look like. Then say which
@@ -160,13 +174,32 @@ layout, number format, photos, verdict line, page count, save ask, length, shape
 take the version that won and write down the post it came from and its numbers.
 
 The point of combining is that each reference has a weak spot another one covers. Pair the cover of the post that
-travelled furthest with the slides of the post that was saved most. Put the product once, on the last slide, as the
-answer the post sets up.
+travelled furthest with the slides of the post that was saved most. When one post leads on both, keep its strengths
+and fix its weak spots from the other references and the niche-wide patterns. Put the product once, on the last slide,
+as the answer the post sets up.
+
+**Don't copy what shouldn't be copied, however well it did.** In diet, fitness and body niches, leave out:
+- thin-body covers ("thinspo")
+- "lowest calorie" or extreme-deficit framing
+- before/after bodies
+- shame
+
+Reframe on what helps: fullness, protein, swaps, convenience. Platforms limit that content anyway, and a brand has no
+body to show. The same goes for any reference's unsourced claims: copy the layout, not the claims. Say what you
+changed and why, and expect the reach to differ from the reference's.
 
 ## 6. Write the slides
 
 Copy `assets/example/post.json` to `briefs/<slug>/post.json` and rewrite it. The format is in
-`references/post-spec.md`, with slide types `cover`, `compare`, `item`, `list` and `app`.
+`references/post-spec.md`. The slide types:
+- `cover`
+- `photo`: full-bleed with white text over it, how most winners build their slides
+- `compare`: one swap, before and after
+- `item`: a framed photo with number boxes under it
+- `list`
+- `app`
+
+Pick the content slide that matches the references' layout.
 
 - **One idea per slide, readable in two seconds:** a short title, numbers in big boxes, one verdict line.
 - **Every photo spot gets a brief** that says exactly what to shoot: the real product, held or on a counter, the label
@@ -186,10 +219,15 @@ Every number on a slide must come from a source you actually read in this sessio
 draws correction comments for as long as people find it, and the product's slide vouches for those numbers.
 
 - **Food:** USDA FoodData Central. `python3 $S/usda.py search "greek yogurt plain nonfat"`, then `usda.py show
-  <fdc id>` for per-100 g and per-serving values at USDA's own serving weights, rounded like a label. Use the serving
-  people actually eat, and keep the fdc ids for the write-up.
+  <fdc id>` for per-100 g and per-serving values. Choose the serving people actually eat: the size it's sold in or a
+  common measure. Use USDA's weight for that serving when it lists one, or `--grams` with the weight printed on the
+  slide. Keep the fdc ids for the write-up.
+- **Rounding:** `usda.py` rounds half up to whole calories and grams. US labels round calories to the nearest 5 or 10,
+  so a label in the photo may read 150 where the slide says 149. Decide which the slide shows, and say so in the
+  write-up.
 - **Restaurant orders:** the chain's own nutrition page or PDF. Third-party sites don't count.
 - **Prices, product claims:** the store's or the product's own page.
+- **Other facts** (food safety, how long things keep, health claims): a government or university extension page.
 - **Can't verify it?** Drop the number, change the item, or change the angle. Never publish a guess, and say what you
   dropped.
 
@@ -233,8 +271,8 @@ sections:
    - An App Store campaign link in the bio.
    - Correct numbers in the comments and pin the correction.
 5. **What to measure, and what to do next.**
-   - Saves per 1,000 plays at 48 hours and 7 days, against the references' range (Weight Class swaps: 27–49 when it
-     works; under 5 means watched, not kept).
+   - Saves per 1,000 plays at 48 hours and 7 days, against this formula's references. Use their range; for Weight
+     Class swaps that was 27–49. Under about 5 means watched, not kept.
    - Plays ÷ followers (5× is an outlier).
    - Profile visits and installs from the campaign link.
    - Next: saves high → a second post in the same layout. Reach high but saves low → the content isn't worth keeping.

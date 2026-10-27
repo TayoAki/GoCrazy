@@ -6,7 +6,9 @@
 
 The first run downloads USDA's SR Legacy CSV release (about 6 MB zipped) into data/usda/ (or ~/.cache/usda outside the
 repo) and reuses it after that. Its API's DEMO_KEY rate-limits after a few calls, which is why this reads the files.
-Numbers are rounded the way a label rounds: calories to whole numbers, grams to whole grams (one decimal under 1 g).
+Numbers are rounded half up: calories and sodium to whole numbers, grams to whole grams (one decimal under 1 g). That
+is not how a US Nutrition Facts label rounds: labels show calories to the nearest 5 (up to 50) or 10 (above 50), so the
+label in a photo may say 150 where this says 149. Say which one the slide uses.
 """
 
 import argparse
@@ -17,6 +19,7 @@ import re
 import sys
 import urllib.request
 import zipfile
+from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 
 ZIP_URL = "https://fdc.nal.usda.gov/fdc-datasets/FoodData_Central_sr_legacy_food_csv_2018-04.zip"
@@ -57,10 +60,14 @@ def search(args):
         print("no match; try fewer or different words (USDA writes 'Yogurt, Greek, plain, nonfat')")
 
 
+def half_up(value, places=0):
+    return float(Decimal(str(value)).quantize(Decimal(1).scaleb(-places), rounding=ROUND_HALF_UP))
+
+
 def label_round(name, value):
-    if name in ("kcal", "sodium_mg"):
-        return round(value)
-    return round(value) if value >= 1 else round(value, 1)
+    if name in ("kcal", "sodium_mg") or value >= 1:
+        return int(half_up(value))
+    return half_up(value, 1)
 
 
 def show(args):
@@ -75,7 +82,7 @@ def show(args):
                 for r in table("food_portion") if r["fdc_id"] == fdc and r["gram_weight"]]
     print(f"{fdc}  {food['description']}  (USDA FoodData Central, SR Legacy 2018)")
     print("per 100 g: " + ", ".join(f"{k} {v}" for k, v in per100.items()))
-    servings = [(f"{args.grams} g (yours)", args.grams)] if args.grams else []
+    servings = [(f"{args.grams:g} g (yours)", args.grams)] if args.grams else []
     for label, grams in servings + portions:
         vals = ", ".join(f"{k} {label_round(k, v * grams / 100)}" for k, v in per100.items())
         print(f"per {label} = {grams:g} g: {vals}")
