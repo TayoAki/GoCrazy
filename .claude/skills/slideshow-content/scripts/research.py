@@ -5,6 +5,7 @@ search, and tear down the slideshow and carousel outliers.
     python3 research.py projects                                # list projects (id, name, keywords, outliers)
     python3 research.py new --name "Weight Class" --niche "calorie tracking app" \\
         --keywords "calorie deficit, high protein snacks, food swaps" --study "calai.app, myfitnesspal" --budget 400
+    python3 research.py kinds <project id> --kinds slideshows   # switch post types on an existing project
     python3 research.py run <project id>                        # search; prints progress until it finishes
     python3 research.py teardown <project id> [--kinds slideshow,carousel] [--parallel 3] [--limit 40]
 
@@ -88,15 +89,33 @@ def split(value):
     return [x.strip().lstrip("@") for x in (value or "").replace("\n", ",").split(",") if x.strip()]
 
 
+def kind_settings(kinds):
+    kinds = set(split(kinds))
+    unknown = kinds - {"reels", "carousels", "slideshows"}
+    if unknown:
+        raise SystemExit(f"Unknown post type {', '.join(sorted(unknown))}: use slideshows, carousels, reels")
+    return {"reels": "reels" in kinds, "carousels": "carousels" in kinds, "slideshows": "slideshows" in kinds}
+
+
 def new(args):
-    settings = {"reels": "reels" in args.kinds, "carousels": "carousels" in args.kinds,
-                "slideshows": "slideshows" in args.kinds, "credit_budget": args.budget, "max_creators": args.max_creators}
+    settings = {**kind_settings(args.kinds), "credit_budget": args.budget, "max_creators": args.max_creators}
     if args.study:
         settings["study_accounts"] = split(args.study)
+        if not (settings["reels"] or settings["carousels"]):
+            print("note: study accounts are Instagram handles and are only scanned when reels or carousels are on")
     project = call("POST", "/api/projects", {"name": args.name, "niche": args.niche, "keywords": split(args.keywords),
                                              "settings": settings})
     print(f"project #{project['id']} created: {project['name']} · {len(project['keywords'])} keywords · "
           f"budget {settings['credit_budget']} credits")
+
+
+def kinds(args):
+    settings = kind_settings(args.kinds)
+    if args.budget:
+        settings["credit_budget"] = args.budget
+    project = call("PATCH", f"/api/projects/{args.project}", {"settings": settings})
+    on = [k for k in ("reels", "carousels", "slideshows") if project["settings"].get(k)]
+    print(f"project #{project['id']}: {', '.join(on)} · budget {project['settings'].get('credit_budget')} credits")
 
 
 def run(args):
@@ -160,6 +179,11 @@ def main():
     p.add_argument("--budget", type=int, default=400, help="ScrapeCreators credit cap for one run")
     p.add_argument("--max-creators", type=int, default=40)
     p.set_defaults(fn=new)
+    p = sub.add_parser("kinds")
+    p.add_argument("project", type=int)
+    p.add_argument("--kinds", required=True, help="slideshows, carousels, reels (the ones not named are switched off)")
+    p.add_argument("--budget", type=int)
+    p.set_defaults(fn=kinds)
     p = sub.add_parser("run")
     p.add_argument("project", type=int)
     p.set_defaults(fn=run)

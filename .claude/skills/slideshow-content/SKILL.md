@@ -34,15 +34,25 @@ briefs/<slug>/
 
 Then a write-up (step 9) and the folder as a zip.
 
-## 1. Know the product before writing a word about it
+## 1. Know what you're promoting before writing a word about it
 
-The last slide makes claims about the product, so get them right first. Read its website and its App Store or shop
-page, and write `product.md`:
-- what it does
-- the price model ("free to download, with Premium")
-- platforms
-- where its numbers come from (e.g. USDA)
-- its real store link
+The last slide tells people what to do next, so everything on it has to be true. "The product" may be an app, a
+shop, a service, a local club or a creator. Read its own pages (website, App Store or shop page, booking or sign-up
+page, social profiles) and write `product.md`.
+
+- **For an app or product:**
+  - what it does
+  - the price model ("free to download, with Premium")
+  - platforms
+  - where its numbers come from (e.g. USDA)
+  - its real store link
+- **For a local business, club or service:**
+  - its name and handle
+  - where, when, and how much
+  - how to join or book (the link)
+  - what a newcomer should know ("no experience needed, sets provided")
+
+Ask the person for whatever you can't find. Don't fill gaps with guesses.
 
 Sites go stale: in the Weight Class run the site still said "on its way" while the app was live. When the sources
 disagree, say so.
@@ -54,26 +64,45 @@ results (slideshows) and creators' feeds (Instagram carousels), then tears each 
 (`research_app/README.md`) has the details.
 
 ```bash
-python3 $S/research.py serve          # starts the app on :8000 if it isn't running
-python3 $S/research.py projects       # reuse an existing project for this niche when there is one
+python3 $S/research.py serve          # starts the app on :8000 if it isn't running; prints credits left
+python3 $S/research.py projects       # is there a project for this niche already?
 python3 $S/research.py new --name "Weight Class" --niche "calorie tracking app for iPhone" \
   --keywords "calorie deficit, high protein snacks, food swaps, what i eat in a day, calorie counting app" \
-  --study "calai.app, myfitnesspal" --budget 400
-python3 $S/research.py run <id>       # 20–40 min; prints progress
+  --kinds slideshows,carousels --study "calai.app, myfitnesspal" --budget 400
+python3 $S/research.py run <id>       # 10–40 min; prints progress
 python3 $S/research.py teardown <id>  # tears down the slideshow and carousel outliers, 3 at a time
 ```
 
+- **Reuse what's there.** If a project for the niche exists, check it has slide posts:
+  `python3 $S/formulas.py refs <id> --out /tmp/x` reports how many. Many projects were researched for reels only. To
+  add slide posts, switch them on (`research.py kinds <id> --kinds slideshows,carousels`) and run it again. Posts it
+  already found are kept.
 - **Keywords:** 6–10, in the audience's own words. Mix three kinds:
   - the problem ("calorie deficit")
   - the content people save in the niche ("high protein snacks", "food swaps")
   - the category ("calorie counting app")
-- **Study accounts:** competitors' own accounts and creators who grew fast in the niche. They're scanned deeper,
-  whatever their size.
-- **Credits:** the research spends ScrapeCreators credits. The Weight Class run used 458 credits in 28 minutes, with
-  40 creators and 10 study accounts. Tell the person the budget and get a yes before `run`, unless they already asked
-  you to run the research. The key lives in `.env` as `SCRAPECREATORS_API_KEY`. If it's missing, ask them to add it
-  there. Never ask anyone to paste a key into the chat.
-- **AI teardowns** need the `claude` command or `OPENROUTER_API_KEY`. `research.py serve` prints which one is in use.
+
+  For a local business, add the city's own searches ("things to do in austin").
+- **Post types:** `slideshows` (TikTok) is the core. Add `carousels` (Instagram) when the post will go out on
+  Instagram too.
+- **Study accounts** are Instagram handles: competitors' accounts and creators who grew fast in the niche. They're
+  scanned deeper, whatever their size, but only when reels or carousels are on. A TikTok-only run finds its creators
+  through search.
+- **Credits:** one budget covers the whole run, and Instagram goes first. With carousels on, a tight budget can run
+  out before the TikTok search starts, so size it for both.
+  - **TikTok:** about 2 credits per keyword, plus about 2 per creator scanned. 10 keywords and 40 creators come to
+    about 100 credits.
+  - **Instagram:** about 3 per keyword, plus about 5 per creator, plus about 17 per study account. 10 keywords, 40
+    creators and 10 study accounts come to about 400.
+  - **Teardowns:** slideshows cost 0–1 credits each and carousels 1.
+  - **For reference:** the Weight Class run (reels, carousels and slideshows, 40 creators, 10 study accounts) used 458
+    credits in 28 minutes.
+- **Ask before spending.** Before the first run, tell the person in plain words what you'll search, the credit cap,
+  the expected spend and the credits left. Then wait for a yes. "Find what's working" asks for the outcome, not for
+  permission to spend. Go straight ahead only when they've said to run the research or given a budget.
+- **Keys:** the ScrapeCreators key lives in `.env` as `SCRAPECREATORS_API_KEY`. If it's missing, ask the person to add
+  it there. Never ask anyone to paste a key into the chat. AI teardowns need the `claude` command or
+  `OPENROUTER_API_KEY`; `research.py serve` prints which one is in use.
 - **Don't import `research_app.server` from another process while the app works.** Its start-up marks any run in
   progress as failed. The scripts here only use HTTP, or read the database read-only. Don't restart the app during a
   run either.
@@ -144,8 +173,12 @@ Copy `assets/example/post.json` to `briefs/<slug>/post.json` and rewrite it. The
   to camera when the label carries the number. Real phone photos are what the most-saved references used.
 - **Verdict lines must be literally true.** "3 full cups, and still 56 fewer calories" can be checked; "three times
   the bowl" can't. Totals say what they total ("across all five", not "a day").
-- **The app slide** needs a real screenshot of the product doing what the post promises (`assets/`). If you only have
-  a website screenshot, use it as a stand-in and ask for the real one.
+- **The last slide** (type `app`) shows the product doing what the post promises, in an image under `assets/`:
+  - for an app, a real screenshot of it searching the food or logging the order
+  - for a club, shop or service, a real photo of it, with when, where and how to join or buy in the subtitle
+
+  If you only have a stand-in (say, a screenshot from the website), use it, mark it as one, and ask for the real
+  image.
 
 ## 7. Check every number against a primary source
 

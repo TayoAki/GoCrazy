@@ -88,8 +88,9 @@ unless the slide sets `"source"`.
  "screen_brief": "the app's food search on a phone",
  "subtitle": "Every number here is a USDA entry. Search it in Weight Class, free on iPhone.", "save": true}
 ```
-`screen` is an image path relative to the post folder: a real screenshot of the product doing the thing the post
-promises (searching the food, logging the order). Without it the slide shows a placeholder with `screen_brief`. The
+`screen` is an image path relative to the post folder. For an app, use a real screenshot of it doing the thing the
+post promises (searching the food, logging the order). For a club, shop or service, use a real photo of it, and put
+when, where and how to join in the subtitle. Without it the slide shows a placeholder with `screen_brief`. The
 title says what the product does for this post's reader, not the product's slogan.
 
 ## Output
