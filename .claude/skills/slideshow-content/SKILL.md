@@ -357,6 +357,7 @@ the post to TikTok as a photo draft:
 ```bash
 python3 $S/send-drafts.py accounts                        # the connected accounts (the same one can appear twice)
 python3 $S/send-drafts.py send briefs/<slug> --account <id> --caption-file briefs/<slug>/caption.txt
+python3 $S/send-drafts.py send briefs/<slug> --account <id> --caption-file … --video briefs/<slug>/out/reel.mp4
 ```
 
 - **Drafts only.** The slides go to the account's TikTok inbox as a draft (`MEDIA_UPLOAD`). Nothing is public until

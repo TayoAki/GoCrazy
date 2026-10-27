@@ -3,6 +3,7 @@ account's TikTok inbox, and nothing is public until someone opens it in the TikT
 
     python3 send-drafts.py accounts                                   # the accounts connected to your Outstand key
     python3 send-drafts.py send <post folder> --account <id> --caption "<text>"   # or --caption-file caption.txt
+    python3 send-drafts.py send <post folder> --account <id> --caption-file caption.txt --video out/reel.mp4
 
 The key comes from OUTSTAND_API_KEY in the repo's .env (or the environment); never paste it into a command. The slides
 (out/slide_*.png) are converted to JPEG, because TikTok photo posts take JPEG or WebP only, then uploaded to Outstand
@@ -55,11 +56,11 @@ def accounts(_args=None):
     return found
 
 
-def upload(path):
+def upload(path, content_type="image/jpeg"):
     """Outstand's three steps: ask for an upload URL, PUT the bytes, confirm. Returns the public URL."""
-    slot = call("POST", "/v1/media/upload", {"filename": path.name, "content_type": "image/jpeg"})["data"]
+    slot = call("POST", "/v1/media/upload", {"filename": path.name, "content_type": content_type})["data"]
     req = urllib.request.Request(slot["upload_url"], data=path.read_bytes(), method="PUT",
-                                 headers={"Content-Type": "image/jpeg", "User-Agent": UA})
+                                 headers={"Content-Type": content_type, "User-Agent": UA})
     with urllib.request.urlopen(req, timeout=120) as resp:
         if resp.status >= 300:
             raise SystemExit(f"Upload of {path.name} failed: {resp.status}")
@@ -69,10 +70,13 @@ def upload(path):
 
 def send(args):
     post = Path(args.post)
-    slides = sorted((post / "out").glob("slide_*.png"))
-    if not slides:
-        raise SystemExit(f"No slides in {post / 'out'}; run render.py first")
-    if not 1 <= len(slides) <= 35:
+    video = Path(args.video) if args.video else None
+    slides = [] if video else sorted((post / "out").glob("slide_*.png"))
+    if video and not video.exists():
+        raise SystemExit(f"No video at {video}")
+    if not video and not slides:
+        raise SystemExit(f"No slides in {post / 'out'}; run render.py first (or pass --video)")
+    if not video and not 1 <= len(slides) <= 35:
         raise SystemExit(f"TikTok photo posts take 1 to 35 images, this post has {len(slides)}")
     account = next((a for a in call("GET", "/v1/social-accounts").get("data", [])
                     if args.account in (a["id"], a.get("username"))), None)
@@ -85,10 +89,14 @@ def send(args):
     if not caption:
         raise SystemExit("Give the post a caption (--caption or --caption-file)")
 
+    media = []
+    if video:
+        print(f"uploading {video.name}", flush=True)
+        media.append({"url": upload(video, "video/mp4"), "filename": video.name})
     from PIL import Image
     jpg_dir = post / "out" / "jpg"
-    jpg_dir.mkdir(exist_ok=True)
-    media = []
+    if slides:
+        jpg_dir.mkdir(exist_ok=True)
     for png in slides:
         jpg = jpg_dir / (png.stem + ".jpg")
         Image.open(png).convert("RGB").save(jpg, quality=92)
@@ -101,7 +109,8 @@ def send(args):
     (post / "out" / "drafts.json").write_text(json.dumps({"request": body, "response": result}, indent=1))
     post_info = result.get("post") or result.get("data") or result
     print(json.dumps(post_info, indent=1)[:1500])
-    print(f"\nSent {len(media)} slides to @{account.get('username')} as a TikTok draft (inbox). "
+    what = f"the video {video.name}" if video else f"{len(media)} slides"
+    print(f"\nSent {what} to @{account.get('username')} as a TikTok draft (inbox). "
           "Open TikTok, check the inbox or drafts, add the sound, and post it from there.")
 
 
@@ -114,6 +123,7 @@ def main():
     p.add_argument("--account", required=True, help="the account's id or username, from: accounts")
     p.add_argument("--caption")
     p.add_argument("--caption-file")
+    p.add_argument("--video", help="send this .mp4 as a video draft instead of the slides")
     p.set_defaults(fn=send)
     args = ap.parse_args()
     args.fn(args)
