@@ -27,6 +27,7 @@ briefs/<slug>/
   research/refs.md        every winning post, readable (step 3)
   research/formulas.md    the formulas ranked, and the patterns across all winners (step 3)
   post.json               the slides (step 6)
+  photo-search/           one numbered sheet of candidate photos per spot (step 8)
   photos/                 photos/<key>.jpg fills a spot (found photos until the person shoots), SOURCES.md credits
   assets/                 screenshots for the app slide
   out/slide_01.png …      the slides, and out/contact.jpg with all of them at a glance
@@ -202,8 +203,15 @@ Copy `assets/example/post.json` to `briefs/<slug>/post.json` and rewrite it. The
 Pick the content slide that matches the references' layout.
 
 - **One idea per slide, readable in two seconds:** a short title, numbers in big boxes, one verdict line.
-- **Every photo spot gets a brief** that says exactly what to shoot: the real product, held or on a counter, the label
-  to camera when the label carries the number. Real phone photos are what the most-saved references used.
+- **Every photo spot gets a brief, a search and a source:**
+  `{"key": "greek-yogurt", "brief": "…", "search": "greek yogurt nonfat plain", "src": "openfoodfacts"}`.
+  - The brief says exactly what the person should shoot: the real product, held or on a counter, the label to camera
+    when the label carries the number.
+  - The search says what a real photo found online should show, in plain words for what it looks like.
+  - The source says where to look: `openfoodfacts` for anything sold in a package, `commons` for unbranded food,
+    places and scenes.
+
+  Step 8 fills every spot from these, so the person sees finished slides, not empty boxes.
 - **Verdict lines must be literally true.** "3 full cups, and still 56 fewer calories" can be checked; "three times
   the bowl" can't. Totals say what they total ("across all five", not "a day").
 - **The last slide** (type `app`) shows the product doing what the post promises, in an image under `assets/`:
@@ -234,26 +242,37 @@ draws correction comments for as long as people find it, and the product's slide
 Generic values won't match every brand. Tell the person to check each one against the label in their photo, and to
 use the label's number if they differ.
 
-## 8. Fill the photo spots with real photos, render and review
+## 8. Fill every photo spot with a real photo, render and review
 
-The best photos are the person's own phone photos of the exact products, because the most-saved references use them
-and the label in shot matches the slide. Until they shoot (or when they can't), fill the spots with **real, licensed
-photos found online. Never generated images.** This follows Editor V1's sourcing rules: find the thing's own picture,
-choose it by looking, and record its source and licence.
+Hand over finished slides with real photos of real products in them, not empty boxes. Real reference content is what
+makes a slide look like the posts people save, and it lets the person judge the post as it will appear.
+
+The best photos are still the person's own phone photos of the exact products: the most-saved references use them, and
+the label in shot matches the slide. Until they shoot (or when they can't), fill every spot with **a real, licensed
+photo found online. Never use a generated image.** This follows Editor V1's sourcing rules: find the thing's own
+picture, choose it by looking, and record its source and licence.
 
 ```bash
-python3 $S/find-photos.py search "greek yogurt nonfat plain" briefs/<slug> --key greek-yogurt --src openfoodfacts
-#   -> briefs/<slug>/photo-search/greek-yogurt.jpg, a numbered sheet with licence and size. Look at it, then:
+python3 $S/find-photos.py fill briefs/<slug>       # searches every empty spot in post.json, one sheet per spot
+#   -> briefs/<slug>/photo-search/<key>.jpg: numbered candidates with licence and size. Look at each sheet, then:
 python3 $S/find-photos.py get briefs/<slug> --key greek-yogurt 7    # -> photos/greek-yogurt.jpg + photos/SOURCES.md
+python3 $S/find-photos.py search "plain greek yogurt tub" briefs/<slug> --key greek-yogurt --src openfoodfacts  # retry one
+python3 $S/find-photos.py label briefs/<slug> --key greek-yogurt 7  # that product's nutrition label photo, to check
 python3 $S/find-photos.py collage briefs/<slug> --key cover --cols 3 greek-yogurt beef-93 skim-milk popcorn light-mayo
 ```
+
+Look at every sheet before you pick, and at the filled slides after rendering. A title can lie about what a photo
+shows. Match the look of the most-saved references: product photos when they show products, food on a plate when
+they show food. If no licensed photo fits a spot, leave it empty and say which spot and why.
 
 **Sources:**
 - `openfoodfacts`: real packaged products (US first), mostly shoppers' phone photos, with a photo of each
   nutrition label (`find-photos.py label …`). Licence CC BY-SA 3.0.
-- `commons`: Wikimedia Commons, including many CC0 Unsplash and Pexels photos. Best for unbranded food and scenes
-  like a grocery haul. It rate-limits busy addresses for minutes at a time.
-- `openverse`: wider, but slow and sometimes down.
+- `commons`: Wikimedia Commons. Its Unsplash and Pexels imports (CC0, no credit needed) come first, then the rest.
+  Best for unbranded food and scenes. It matches titles and descriptions, so search for the thing's plain name
+  ("watermelon", "cucumber slices", "hard-boiled eggs"), not the brief's sentence. It rate-limits busy addresses: short
+  waits are waited out, and a block of minutes skips to the next source, so try again later.
+- `openverse`: wider, but slow and often down. Only when asked for (`--src commons,openverse`).
 
 **Picking rules,** from filling the Weight Class swaps post:
 - **Match the slide's serving** where you can: a 1 oz bag for "1 oz", one-cup cartons for "1 cup".
@@ -264,7 +283,10 @@ python3 $S/find-photos.py collage briefs/<slug> --key cover --cols 3 greek-yogur
   (150).
 - **A same-brand pair** shows the difference best: Signature Farms 80/20 next to Signature Farms 93/7.
 - **At least about 800 px** on the long side. `get` warns when a photo will look soft.
-- **Covers:** for a cover with no photo yet, `collage` makes one from the post's own product photos.
+- **No identifiable people** in found photos. A stranger's face in an ad needs their consent, which a licence doesn't
+  give. Food, products, hands and places are fine.
+- **Covers:** when no single found photo fits the cover, `collage` makes one from the post's own photos. Both
+  Weight Class posts used one until the person shoots the real cover.
 - **Crops:** use `"focus": "50% 20%"` on a photo spot to move the crop, and `"shade": 0.8` on a busy cover to keep
   the title readable.
 
@@ -296,17 +318,20 @@ sections:
 1. **The post.** What it is in one paragraph. Why this formula, with its saves and creators. What it takes from the
    rest of the research.
 2. **The slides.** The contact sheet, then the cover and one content slide at full size. A table for repeated slides
-   (each slide's items and numbers). Where every number comes from (source, id, serving weight).
+   (each slide's items and numbers). Where every number comes from (source, id, serving weight). Where every photo
+   comes from: which spots hold found photos (from `photos/SOURCES.md`, with licences) and which are the person's own,
+   plus anything still a stand-in.
 3. **Why we think it will work.** The weak-spot logic (step 5), then a table: Element | What we do | Taken from (linked)
    | The evidence. Then what could go wrong: sample sizes, account type, generic numbers against labels, and that a
    sound is a correlation, not a cause.
 4. **How to post it.**
-   - The shot list (photo key → what to shoot).
+   - The shot list (photo key → what to shoot), to replace the found photos with their own when they can.
    - Check the numbers against the labels.
    - Replace the app screen, then rebuild with `render.py`.
    - Post as a TikTok photo post and an Instagram carousel the same day.
    - The sound. TikTok's original sounds don't carry over to Instagram, so pick a quiet song there.
-   - The caption: one line, first person only if it's true, plus 4–5 hashtags.
+   - The caption: one line, first person only if it's true, plus 4–5 hashtags. While found CC BY or CC BY-SA
+     photos are in, end it with their credit ("Photos: Open Food Facts contributors, CC BY-SA 3.0").
    - An App Store campaign link in the bio.
    - Correct numbers in the comments and pin the correction.
 5. **What to measure, and what to do next.**
@@ -323,6 +348,7 @@ is, why it should work, and what the person does next (usually: take the photos,
 
 ## When the person comes back with photos
 
-Put them at `briefs/<slug>/photos/<key>.jpg` (the keys are in `post.json`) and run `render.py`. Check each filled slide
+Put them at `briefs/<slug>/photos/<key>.jpg` (the keys are in `post.json`), replacing the found photo, and delete that
+key's row from `photos/SOURCES.md` (their own photo needs no credit). Then run `render.py`. Check each filled slide
 at full size: crop, readability of the text over the photo, the label in shot. If a product's label disagrees with the
 slide, change the number and its verdict line in `post.json`, then render again.

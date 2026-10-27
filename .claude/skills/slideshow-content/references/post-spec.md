@@ -33,7 +33,18 @@ One file per post, in the post's folder (`briefs/<slug>/post.json`). The worked 
 
 ## Photo spots
 
-Wherever a slide takes a photo: `{"key": "greek-yogurt", "brief": "a Greek yogurt cup with berries on top"}`.
+Wherever a slide takes a photo:
+
+```json
+{"key": "greek-yogurt", "brief": "a Greek yogurt cup with berries on top",
+ "search": "greek yogurt nonfat plain", "src": "openfoodfacts", "focus": "50% 40%"}
+```
+
+- `brief`: what the person should shoot.
+- `search` and `src`: what a real photo found online should show, and where `scripts/find-photos.py fill` looks for
+  it. Use `openfoodfacts` for anything sold in a package, and `commons` for unbranded food, places and scenes. Write
+  the search as the thing's plain name ("hard-boiled eggs"), not a sentence.
+- `focus` (optional): moves the crop.
 
 - Until `photos/<key>.jpg` (or `.jpeg`, `.png`, `.webp`) exists, the spot renders as a dashed PHOTO box showing the
   brief, so the person sees exactly what to shoot and where it goes. `render.py` lists the empty spots.

@@ -1,48 +1,140 @@
 {
-  "title": "5 easy swaps that actually save calories",
-  "size": [1080, 1440],
-  "theme": {"accent": "#2340B0", "muted": "#5B6475"},
-  "save_line": "↓ SAVE THIS FOR YOUR NEXT GROCERY RUN ↓",
-  "source_line": "Per serving · USDA FoodData Central",
-  "slides": [
-    {"type": "cover",
-     "title": "5 easy swaps that *actually* save calories",
-     "subtitle": "368 fewer calories and 16 g more protein across all five. Same meals.",
-     "photo": {"key": "cover", "brief": "COVER: your grocery haul in the car boot, phone photo"},
-     "save": true},
-    {"type": "compare", "title": "POTATO CHIPS →\nAIR-POPPED POPCORN",
-     "before": {"name": "Potato chips", "serving": "1 oz", "stats": [["149", "CAL"], ["2 G", "PROTEIN"]],
-                "photo": {"key": "chips", "brief": "a 1 oz bag of chips on your counter"}},
-     "after": {"name": "Air-popped popcorn", "serving": "3 cups", "stats": [["93", "CAL"], ["3 G", "PROTEIN"]],
-               "photo": {"key": "popcorn", "brief": "a big bowl of popcorn, 3 cups"}},
-     "verdict": "3 full cups, and still 56 fewer calories"},
-    {"type": "compare", "title": "FRUIT YOGURT →\nGREEK YOGURT",
-     "before": {"name": "Fruit low-fat yogurt", "serving": "6 oz", "stats": [["173", "CAL"], ["7 G", "PROTEIN"]],
-                "photo": {"key": "fruit-yogurt", "brief": "a fruit yogurt cup, label to camera"}},
-     "after": {"name": "Plain nonfat Greek yogurt", "serving": "6 oz", "stats": [["100", "CAL"], ["17 G", "PROTEIN"]],
-               "photo": {"key": "greek-yogurt", "brief": "a Greek yogurt cup with berries on top"}},
-     "verdict": "73 fewer calories and 10 g more protein"},
-    {"type": "compare", "title": "MAYO → LIGHT MAYO",
-     "before": {"name": "Mayonnaise", "serving": "1 tbsp", "stats": [["94", "CAL"]],
-                "photo": {"key": "mayo", "brief": "your usual mayo jar"}},
-     "after": {"name": "Light mayonnaise", "serving": "1 tbsp", "stats": [["36", "CAL"]],
-               "photo": {"key": "light-mayo", "brief": "a light mayo jar"}},
-     "verdict": "Same sandwich, 58 calories back"},
-    {"type": "compare", "title": "80/20 → 93/7 GROUND BEEF",
-     "before": {"name": "80/20 ground beef", "serving": "4 oz raw", "stats": [["287", "CAL"], ["19 G", "PROTEIN"]],
-                "photo": {"key": "beef-80", "brief": "an 80/20 pack, label to camera"}},
-     "after": {"name": "93/7 ground beef", "serving": "4 oz raw", "stats": [["172", "CAL"], ["24 G", "PROTEIN"]],
-               "photo": {"key": "beef-93", "brief": "a 93/7 pack, label to camera"}},
-     "verdict": "Same tacos, 115 fewer calories, 5 g more protein"},
-    {"type": "compare", "title": "WHOLE MILK → SKIM MILK",
-     "before": {"name": "Whole milk", "serving": "1 cup", "stats": [["149", "CAL"], ["8 G", "PROTEIN"]],
-                "photo": {"key": "whole-milk", "brief": "a whole milk carton"}},
-     "after": {"name": "Skim milk", "serving": "1 cup", "stats": [["83", "CAL"], ["8 G", "PROTEIN"]],
-               "photo": {"key": "skim-milk", "brief": "a skim milk carton"}},
-     "verdict": "Same 8 g protein, 66 fewer calories"},
-    {"type": "app", "title": "Check any swap yourself in Weight Class",
-     "screen": "assets/phone-search.png", "screen_brief": "the app's food search on a phone",
-     "subtitle": "Every number here is a USDA entry. Search it in Weight Class, free on iPhone.",
-     "save": true}
-  ]
+ "title": "5 easy swaps that actually save calories",
+ "size": [1080, 1440],
+ "theme": {
+  "accent": "#2340B0",
+  "muted": "#5B6475"
+ },
+ "save_line": "↓ SAVE THIS FOR YOUR NEXT GROCERY RUN ↓",
+ "source_line": "Per serving · USDA FoodData Central",
+ "slides": [
+  {
+   "type": "cover",
+   "title": "5 easy swaps that *actually* save calories",
+   "subtitle": "368 fewer calories and 16 g more protein across all five. Same meals.",
+   "photo": {"key": "cover", "brief": "COVER: your grocery haul in the car boot, phone photo", "search": "groceries car trunk", "src": "commons"},
+   "save": true
+  },
+  {
+   "type": "compare",
+   "title": "POTATO CHIPS →\nAIR-POPPED POPCORN",
+   "before": {
+    "name": "Potato chips",
+    "serving": "1 oz",
+    "stats": [
+     ["149", "CAL"],
+     ["2 G", "PROTEIN"]
+    ],
+    "photo": {"key": "chips", "brief": "a 1 oz bag of chips on your counter", "search": "potato chips", "src": "openfoodfacts"}
+   },
+   "after": {
+    "name": "Air-popped popcorn",
+    "serving": "3 cups",
+    "stats": [
+     ["93", "CAL"],
+     ["3 G", "PROTEIN"]
+    ],
+    "photo": {"key": "popcorn", "brief": "a big bowl of popcorn, 3 cups", "search": "popcorn kernels", "src": "openfoodfacts"}
+   },
+   "verdict": "3 full cups, and still 56 fewer calories"
+  },
+  {
+   "type": "compare",
+   "title": "FRUIT YOGURT →\nGREEK YOGURT",
+   "before": {
+    "name": "Fruit low-fat yogurt",
+    "serving": "6 oz",
+    "stats": [
+     ["173", "CAL"],
+     ["7 G", "PROTEIN"]
+    ],
+    "photo": {"key": "fruit-yogurt", "brief": "a fruit yogurt cup, label to camera", "search": "lowfat strawberry yogurt", "src": "openfoodfacts"}
+   },
+   "after": {
+    "name": "Plain nonfat Greek yogurt",
+    "serving": "6 oz",
+    "stats": [
+     ["100", "CAL"],
+     ["17 G", "PROTEIN"]
+    ],
+    "photo": {"key": "greek-yogurt", "brief": "a Greek yogurt cup with berries on top", "search": "greek yogurt nonfat plain", "src": "openfoodfacts"}
+   },
+   "verdict": "73 fewer calories and 10 g more protein"
+  },
+  {
+   "type": "compare",
+   "title": "MAYO → LIGHT MAYO",
+   "before": {
+    "name": "Mayonnaise",
+    "serving": "1 tbsp",
+    "stats": [
+     ["94", "CAL"]
+    ],
+    "photo": {"key": "mayo", "brief": "your usual mayo jar", "search": "mayonnaise real", "src": "openfoodfacts"}
+   },
+   "after": {
+    "name": "Light mayonnaise",
+    "serving": "1 tbsp",
+    "stats": [
+     ["36", "CAL"]
+    ],
+    "photo": {"key": "light-mayo", "brief": "a light mayo jar", "search": "light mayonnaise", "src": "openfoodfacts"}
+   },
+   "verdict": "Same sandwich, 58 calories back"
+  },
+  {
+   "type": "compare",
+   "title": "80/20 → 93/7 GROUND BEEF",
+   "before": {
+    "name": "80/20 ground beef",
+    "serving": "4 oz raw",
+    "stats": [
+     ["287", "CAL"],
+     ["19 G", "PROTEIN"]
+    ],
+    "photo": {"key": "beef-80", "brief": "an 80/20 pack, label to camera", "search": "ground beef 80% lean 20% fat", "src": "openfoodfacts"}
+   },
+   "after": {
+    "name": "93/7 ground beef",
+    "serving": "4 oz raw",
+    "stats": [
+     ["172", "CAL"],
+     ["24 G", "PROTEIN"]
+    ],
+    "photo": {"key": "beef-93", "brief": "a 93/7 pack, label to camera", "search": "ground beef 93% lean 7% fat", "src": "openfoodfacts"}
+   },
+   "verdict": "Same tacos, 115 fewer calories, 5 g more protein"
+  },
+  {
+   "type": "compare",
+   "title": "WHOLE MILK → SKIM MILK",
+   "before": {
+    "name": "Whole milk",
+    "serving": "1 cup",
+    "stats": [
+     ["149", "CAL"],
+     ["8 G", "PROTEIN"]
+    ],
+    "photo": {"key": "whole-milk", "brief": "a whole milk carton", "search": "whole milk vitamin d", "src": "openfoodfacts"}
+   },
+   "after": {
+    "name": "Skim milk",
+    "serving": "1 cup",
+    "stats": [
+     ["83", "CAL"],
+     ["8 G", "PROTEIN"]
+    ],
+    "photo": {"key": "skim-milk", "brief": "a skim milk carton", "search": "fat free skim milk", "src": "openfoodfacts"}
+   },
+   "verdict": "Same 8 g protein, 66 fewer calories"
+  },
+  {
+   "type": "app",
+   "title": "Check any swap yourself in Weight Class",
+   "screen": "assets/phone-search.png",
+   "screen_brief": "the app's food search on a phone",
+   "subtitle": "Every number here is a USDA entry. Search it in Weight Class, free on iPhone.",
+   "save": true
+  }
+ ]
 }

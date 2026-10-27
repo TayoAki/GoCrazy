@@ -1,20 +1,26 @@
 """Find real, freely licensed photos for a post's photo spots, choose them by looking, and keep their credits.
 
+    python3 find-photos.py fill <post folder>          # searches for every empty photo spot in post.json at once
     python3 find-photos.py search "<query>" <post folder> --key <photo key> [--src commons,openverse] [--n 12]
     python3 find-photos.py get <post folder> --key <photo key> <number on the sheet>
     python3 find-photos.py label <post folder> --key <photo key> <number>     # a product's nutrition label photo
     python3 find-photos.py collage <post folder> --key cover --cols 2 popcorn greek-yogurt light-mayo beef-93 skim-milk
 
-search writes <post>/photo-search/<key>.json (the candidates) and <key>.jpg, a numbered contact sheet showing each
+fill reads each spot's "search" (what the photo should show) and "src" (where to look) from post.json, falling back
+to its brief and commons,openfoodfacts. search writes <post>/photo-search/<key>.json (the candidates) and <key>.jpg, a numbered contact sheet showing each
 photo with its licence, so you pick by looking at it, never by its title. get downloads the one you pick to
 <post>/photos/<key>.jpg (what render.py fills the spot with) and records it in <post>/photos/SOURCES.md: title,
 author, licence and page, the credit a CC BY or CC BY-SA photo needs.
 
 Sources (no keys, no logins):
-  commons    Wikimedia Commons files. Fast. It also holds many Unsplash, Pexels and Flickr photos under CC0 or
-             CC BY; put "unsplash" or "pexels" in the query to find stock-style shots.
-  openverse  Openverse (api.openverse.org), filtered to licences that allow commercial use and changes. It's
-             slow (about 40 s a search) but covers more of Flickr.
+  openfoodfacts  Real packaged products (US first), mostly shoppers' phone photos, with nutrition label photos.
+             CC BY-SA 3.0, credit "Open Food Facts contributors". For anything sold in a package.
+  commons    Wikimedia Commons files, Unsplash and Pexels imports (CC0) first. For unbranded food, places and
+             scenes. Its search matches titles and descriptions, so use the thing's plain name ("watermelon",
+             "cucumber slices"), not a sentence. It rate-limits busy addresses: a short wait is waited out, a long
+             one skips to the next source.
+  openverse  Openverse (api.openverse.org), filtered to licences that allow commercial use and changes. Wider, but
+             slow (about 40 s a search) and often down, so only when asked for (--src commons,openverse).
 
 Only licences that allow commercial use and changes are kept: CC0, public domain, CC BY and CC BY-SA. CC BY needs a
 credit (put it in the caption); CC BY-SA also asks that what you make from it is shared under the same licence, so
@@ -61,17 +67,27 @@ def plain(s):
 
 
 def commons(query, n):
+    """Commons files. Stock photos imported from Unsplash and Pexels (CC0, titled "… (Unsplash).jpg") come first,
+    since they look like the photos people post; then the rest of Commons for the same words."""
     api = "https://commons.wikimedia.org/w/api.php?"
-    found = json.loads(get(api + urllib.parse.urlencode({
-        "action": "query", "list": "search", "srnamespace": 6, "srsearch": f"{query} filetype:bitmap",
-        "srlimit": n * 2, "format": "json"})))["query"]["search"]
+
+    def search(q, limit):
+        return json.loads(get(api + urllib.parse.urlencode({
+            "action": "query", "list": "search", "srnamespace": 6, "srsearch": f"{q} filetype:bitmap",
+            "srlimit": limit, "format": "json"})))["query"]["search"]
+
+    found = [] if "intitle:" in query else search(f"{query} intitle:unsplash", n) + search(f"{query} intitle:pexels", n // 2)
+    if len(found) < n:
+        titles = {r["title"] for r in found}
+        found += [r for r in search(query, n * 2) if r["title"] not in titles]
+    found = found[: n * 2]
     if not found:
         return []
     info = json.loads(get(api + urllib.parse.urlencode({
         "action": "query", "titles": "|".join(r["title"] for r in found), "prop": "imageinfo",
-        "iiprop": "url|extmetadata|size|mime", "iiurlwidth": 2000, "format": "json"})))["query"]["pages"]
-    out = []
-    for page in info.values():
+        "iiprop": "url|extmetadata|size|mime", "iiurlwidth": 1280, "format": "json"})))["query"]["pages"]
+    out, order = [], {r["title"]: k for k, r in enumerate(found)}
+    for page in sorted(info.values(), key=lambda pg: order.get(pg["title"], 999)):
         ii = (page.get("imageinfo") or [{}])[0]
         meta = ii.get("extmetadata") or {}
         licence = plain((meta.get("LicenseShortName") or {}).get("value"))
@@ -81,7 +97,7 @@ def commons(query, n):
                     "author": plain((meta.get("Artist") or {}).get("value"))[:120] or "unknown",
                     "licence_url": plain((meta.get("LicenseUrl") or {}).get("value")),
                     "page": ii.get("descriptionurl"), "url": ii.get("thumburl") or ii.get("url"),
-                    "thumb": (ii.get("thumburl") or ii.get("url")).replace("/2000px-", "/400px-"),
+                    "thumb": (ii.get("thumburl") or ii.get("url")).replace("/1280px-", "/330px-"),  # standard sizes only
                     "width": ii.get("width"), "height": ii.get("height")})
     return out[:n]
 
@@ -138,6 +154,8 @@ def sheet(cands, path, tw=300, th=300, cols=4):
     for k, c in enumerate(cands):
         x, y = (k % cols) * (tw + 10), (k // cols) * (th + 52)
         try:
+            if c["src"] == "commons":
+                time.sleep(0.5)  # Wikimedia's image host limits fast callers
             im = Image.open(io.BytesIO(get(c["thumb"]))).convert("RGB")
             im.thumbnail((tw, th))
             canvas.paste(im, (x + (tw - im.width) // 2, y + (th - im.height) // 2))
@@ -149,22 +167,71 @@ def sheet(cands, path, tw=300, th=300, cols=4):
     canvas.save(path, quality=85)
 
 
-def search(args):
-    folder = Path(args.post) / "photo-search"
+SOURCES = {"commons": commons, "openverse": openverse, "openfoodfacts": openfoodfacts}
+
+
+def find(query, post, key, srcs, n):
+    """Search each source (a failing one is skipped), write the candidates and their numbered sheet. Returns them."""
+    folder = Path(post) / "photo-search"
     folder.mkdir(parents=True, exist_ok=True)
     cands = []
-    for src in args.src.split(","):
+    for src in [x.strip() for x in srcs.split(",") if x.strip()]:
         try:
-            cands += {"commons": commons, "openverse": openverse, "openfoodfacts": openfoodfacts}[src.strip()](args.query, args.n)
+            cands += SOURCES[src](query, n)
         except Exception as e:
-            print(f"{src}: {type(e).__name__}: {e}", file=sys.stderr)
+            print(f"  {src}: {type(e).__name__}: {str(e)[:160]}", file=sys.stderr)
+    if cands:
+        (folder / f"{key}.json").write_text(json.dumps({"query": query, "candidates": cands}, indent=1))
+        sheet(cands, folder / f"{key}.jpg")
+    return cands
+
+
+def search(args):
+    cands = find(args.query, args.post, args.key, args.src, args.n)
     if not cands:
         raise SystemExit("Nothing found with a usable licence; try other words (what it looks like, not what it's called)")
-    (folder / f"{args.key}.json").write_text(json.dumps({"query": args.query, "candidates": cands}, indent=1))
-    sheet(cands, folder / f"{args.key}.jpg")
-    print(f"{len(cands)} candidates -> {folder / (args.key + '.jpg')} (look at it, then: get {args.post} --key {args.key} <n>)")
+    print(f"{len(cands)} candidates -> {Path(args.post) / 'photo-search' / (args.key + '.jpg')} "
+          f"(look at it, then: get {args.post} --key {args.key} <n>)")
     for k, c in enumerate(cands, 1):
         print(f"{k:2}. [{c['licence']}] {c['title'][:70]} · {c.get('label_says') or c['author'][:40]}")
+
+
+def spots(spec):
+    """Every photo spot in a post spec, in slide order: (photo dict, slide number)."""
+    for i, slide in enumerate(spec["slides"], 1):
+        for holder in (slide, slide.get("before") or {}, slide.get("after") or {}):
+            if isinstance(holder.get("photo"), dict) and holder["photo"].get("key"):
+                yield holder["photo"], i
+
+
+def fill(args):
+    """Search for every photo spot in post.json that has no photo yet, using each spot's "search" (and "src")."""
+    post = Path(args.post)
+    spec = json.loads((post / "post.json").read_text())
+    done, todo = [], []
+    seen = set()
+    for photo, slide in spots(spec):
+        key = photo["key"]
+        if key in seen:
+            continue
+        seen.add(key)
+        if any((post / "photos" / f"{key}{ext}").exists() for ext in (".jpg", ".jpeg", ".png", ".webp")) and not args.redo:
+            done.append(key)
+            continue
+        query = photo.get("search") or re.sub(r"^[A-Z ]+:\s*", "", photo.get("brief", key))
+        srcs = args.src or photo.get("src") or "commons,openfoodfacts"
+        print(f"slide {slide} · {key}: \"{query}\" ({srcs})", flush=True)
+        cands = find(query, post, key, srcs, args.n)
+        todo.append((key, len(cands)))
+        print(f"  {len(cands)} candidates" + (f" -> photo-search/{key}.jpg" if cands else
+              ": none; give the spot a plainer \"search\" (what it looks like) or another \"src\""), flush=True)
+    if done:
+        print(f"already filled, skipped: {', '.join(done)} (--redo to search again)")
+    if todo:
+        print("\nNow look at each sheet and pick:")
+        for key, n in todo:
+            if n:
+                print(f"  python3 {Path(__file__).name} get {args.post} --key {key} <number>")
 
 
 def fetch(args):
@@ -234,6 +301,12 @@ def main():
     p.add_argument("--src", default="commons")
     p.add_argument("--n", type=int, default=12)
     p.set_defaults(fn=search)
+    p = sub.add_parser("fill")
+    p.add_argument("post")
+    p.add_argument("--src", help="override every spot's sources, e.g. commons,openverse")
+    p.add_argument("--n", type=int, default=12)
+    p.add_argument("--redo", action="store_true", help="search again for spots that already have a photo")
+    p.set_defaults(fn=fill)
     p = sub.add_parser("get")
     p.add_argument("post")
     p.add_argument("--key", required=True)
