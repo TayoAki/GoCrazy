@@ -292,7 +292,8 @@ they show food. If no licensed photo fits a spot, leave it empty and say which s
 
 **Credits and risks to tell the person:**
 - **Credits:** `photos/SOURCES.md` lists every photo's source and licence. CC BY and CC BY-SA need a credit in the
-  caption ("Photos: Open Food Facts contributors, CC BY-SA 3.0"). CC BY-SA also asks that what's made from the
+  caption; `find-photos.py credits briefs/<slug>` writes the line ("Photos: Open Food Facts contributors (CC BY-SA
+  3.0)"). CC0 and public-domain photos need none. CC BY-SA also asks that what's made from the
   photo is shared under the same licence.
 - **Brands:** showing named brands from a brand account is comparative advertising, so the numbers must be right for
   what's pictured. Their own photos avoid both issues; say so.

@@ -4,6 +4,7 @@
     python3 find-photos.py search "<query>" <post folder> --key <photo key> [--src commons,openverse] [--n 12]
     python3 find-photos.py get <post folder> --key <photo key> <number on the sheet>
     python3 find-photos.py label <post folder> --key <photo key> <number>     # a product's nutrition label photo
+    python3 find-photos.py credits <post folder>       # the caption's credit line for the found photos
     python3 find-photos.py collage <post folder> --key cover --cols 2 popcorn greek-yogurt light-mayo beef-93 skim-milk
 
 fill reads each spot's "search" (what the photo should show) and "src" (where to look) from post.json, falling back
@@ -291,6 +292,23 @@ def collage(args):
     print(f"photos/{args.key}.jpg <- collage of {', '.join(keys)}")
 
 
+def credits(args):
+    """The caption's credit line: every found photo whose licence asks for credit (CC BY, CC BY-SA), by author."""
+    table = Path(args.post) / "photos" / "SOURCES.md"
+    if not table.exists():
+        raise SystemExit("No photos/SOURCES.md: no found photos to credit")
+    by = {}
+    for row in table.read_text().splitlines():
+        cells = [c.strip() for c in row.strip().strip("|").split("|")]
+        if len(cells) >= 4 and re.search(r"\bBY\b", cells[3], re.I):
+            by.setdefault(cells[3], []).append(cells[2])
+    if not by:
+        print("No credit needed: every found photo is CC0 or public domain.")
+        return
+    parts = [f"{', '.join(dict.fromkeys(a))} ({lic})" for lic, a in by.items()]
+    print("Photos: " + "; ".join(parts))
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -317,6 +335,9 @@ def main():
     p.add_argument("--key", required=True)
     p.add_argument("n", type=int)
     p.set_defaults(fn=label)
+    p = sub.add_parser("credits")
+    p.add_argument("post")
+    p.set_defaults(fn=credits)
     p = sub.add_parser("collage")
     p.add_argument("post")
     p.add_argument("--key", required=True, help="the photo key to write, e.g. cover")
