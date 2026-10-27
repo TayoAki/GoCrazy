@@ -343,6 +343,22 @@ sections:
    - Next: saves high → a second post in the same layout. Reach high but saves low → the content isn't worth keeping.
      Both low → post the same slides from a creator's account.
 
+**Sending drafts.** When the person asks for drafts and has an Outstand key (`OUTSTAND_API_KEY` in `.env`), send
+the post to TikTok as a photo draft:
+
+```bash
+python3 $S/send-drafts.py accounts                        # the connected accounts (the same one can appear twice)
+python3 $S/send-drafts.py send briefs/<slug> --account <id> --caption-file briefs/<slug>/caption.txt
+```
+
+- **Drafts only.** The slides go to the account's TikTok inbox as a draft (`MEDIA_UPLOAD`). Nothing is public until
+  the person adds the sound and posts it in the app.
+- **Other networks are refused,** because there they would publish for real.
+- **The caption** goes in `caption.txt`: the line, the hashtags, then the photo credit line.
+- **Check delivery.** The result is saved to `out/drafts.json`. Each account in the post should read
+  `status: published` with an inbox id (`p_inbox_url~…`).
+- **The key:** if it's missing, ask the person to add it to `.env`, never to paste it.
+
 Zip the post folder and send it with the file tool when you have one. Finish with a few lines in chat: what the post
 is, why it should work, and what the person does next (usually: take the photos, drop them in `photos/`, run
 `render.py`).
