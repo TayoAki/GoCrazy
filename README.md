@@ -40,6 +40,15 @@ for a client's niche (OpenRouter), with optional rendering (Hypit). In this repo
 `short-form-content` skill (`.claude/skills/short-form-content/SKILL.md`). API keys go in environment variables
 (`SCRAPECREATORS_API_KEY`, `OPENROUTER_API_KEY`, `SUPADATA_API_KEY`), never in files.
 
+## Slideshow skill
+
+[`.claude/skills/slideshow-content/`](.claude/skills/slideshow-content/SKILL.md) turns a niche's winning TikTok
+slideshows and Instagram carousels into one post. It runs the research app below, ranks the proven formulas by saves
+per 1,000 plays, and combines the version of each element that won into one post. It checks every number against a
+primary source (`scripts/usda.py` for food) and renders the slides at 3:4 (`scripts/render.py`). The rendered slides
+have photo spots you fill with your own photos. Its worked example is the Weight Class food-swaps post. Posts are
+written to `briefs/`, which is gitignored like `data/`.
+
 ## Outlier research app
 
 [`research_app/`](research_app/README.md) is a local web app for the research step: it finds outliers in a niche with
