@@ -46,8 +46,10 @@ for a client's niche (OpenRouter), with optional rendering (Hypit). In this repo
 slideshows and Instagram carousels into one post. It runs the research app below, ranks the proven formulas by saves
 per 1,000 plays, and combines the version of each element that won into one post. It checks every number against a
 primary source (`scripts/usda.py` for food) and renders the slides at 3:4 (`scripts/render.py`). The rendered slides
-have photo spots you fill with your own photos. Its worked example is the Weight Class food-swaps post. Posts are
-written to `briefs/`, which is gitignored like `data/`.
+have photo spots you fill with your own photos. Its worked example is the Weight Class food-swaps post. It also turns
+a person's own before/after clip into a reel in the body-turn format the research found (`scripts/reel.py`), and
+sends slides or a reel to TikTok as a draft (`scripts/send-drafts.py`). Posts are written to `briefs/`, which is
+gitignored like `data/`.
 
 ## Outlier research app
 

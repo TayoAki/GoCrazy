@@ -1,6 +1,6 @@
 ---
 name: slideshow-content
-description: Research the TikTok photo slideshows and Instagram carousels that outperform in a niche, find the proven formulas (plays ÷ followers, saves per 1,000 plays), pick one, and build ONE post that combines the version of each element that won, with every number checked against a primary source and a written case for why it should work. Then render it as ready-to-post 3:4 slides, with photo spots filled by real, licensed product photos found online (never generated) until the person's own photos replace them. Use this whenever someone wants slideshow or carousel content for an app, brand or creator, e.g. "what slides should we make to market X", "find the outlier slideshows in this niche", "proven formulas for this niche", "recreate this outlier", "combine what works into one post", "make the slide templates", "a carousel for my app", "put real product photos in the slides", even if they never say "slideshow". For talking-head reel, TikTok or Shorts scripts use short-form-content instead.
+description: Research the TikTok photo slideshows and Instagram carousels that outperform in a niche, find the proven formulas (plays ÷ followers, saves per 1,000 plays), and build ONE post from the version of each element that won, with every number checked against a primary source and a written case for why it should work. Renders ready-to-post 3:4 slides with real, licensed product photos found online (never generated), and turns a person's own before/after clip into a reel in the winning format, then sends either to TikTok as a draft. Use this whenever someone wants slideshow or carousel content for an app, brand or creator, e.g. "what slides should we make to market X", "find the outlier slideshows in this niche", "recreate this outlier", "make the slide templates", "a carousel for my app", "put real product photos in the slides", "turn my transformation video into content for my app", even if they never say "slideshow". For talking-head reel, TikTok or Shorts scripts use short-form-content instead.
 ---
 
 # Slideshow content: from outliers to a post that's ready to shoot
@@ -365,12 +365,33 @@ python3 $S/send-drafts.py send briefs/<slug> --account <id> --caption-file … -
 - **Other networks are refused,** because there they would publish for real.
 - **The caption** goes in `caption.txt`: the line, the hashtags, then the photo credit line.
 - **Check delivery.** The result is saved to `out/drafts.json`. Each account in the post should read
-  `status: published` with an inbox id (`p_inbox_url~…`).
+  `status: published` with an inbox id (`p_inbox_url~…` for slides, `v_inbox_url~…` for a video).
 - **The key:** if it's missing, ask the person to add it to `.env`, never to paste it.
 
 Zip the post folder and send it with the file tool when you have one. Finish with a few lines in chat: what the post
 is, why it should work, and what the person does next (usually: take the photos, drop them in `photos/`, run
 `render.py`).
+
+## When the person brings a video: the body-turn reel
+
+Sometimes the person brings a clip instead of asking for slides, e.g. their own before/after. Match it to the
+research by format, not topic: search the outliers for posts that show the same thing (`formulas.py refs`, or the
+teardowns' `format`, `written_hook` and `captions` fields), then copy that layout rather than designing one around
+the clip. For a before/after body turn, the layout is built: `references/reel.md` has the evidence, the caption, the
+rules and the commands. In short:
+
+```bash
+python3 $S/reel.py briefs/<slug>          # reads briefs/<slug>/reel.json -> out/reel.mp4 (9:16, square pixels)
+python3 $S/send-drafts.py send briefs/<slug> --account <id> --caption-file briefs/<slug>/caption.txt \
+  --video briefs/<slug>/out/reel.mp4
+```
+
+- The clip is the person's own, untouched and slowed so each state reads. The hook sits in a black box on the wall
+  above the head, below the apps' top bars. A second line ("here's the N things I did") joins a third of the way in.
+- No watermark on the clip. The product closes the video with its logo, like TikTok's end card.
+- The timeframe and the list in the caption are the person's own words. If any of the clip is made with AI, the
+  caption says so and the post gets TikTok's AI-generated label.
+- Don't credit the product for a result that came before it.
 
 ## When the person comes back with photos
 

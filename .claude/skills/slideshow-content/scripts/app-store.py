@@ -5,8 +5,9 @@ its app slide.
     python3 app-store.py crop <post folder>/assets/appstore/01-home.jpg <post folder>/assets/app-home.jpg \\
         --box 0.086,0.252,0.914,1                      # cut the phone out of a store screenshot (fractions x1,y1,x2,y2)
 
-fetch writes assets/app-icon.png and assets/appstore/<NN-name>.jpg (full size) into the post folder, plus a numbered
-sheet assets/appstore/sheet.jpg to choose from, and prints the "brand" block to put in post.json. Store screenshots
+fetch writes assets/app-icon.png, assets/app-icon-1024.png (for a reel's closing logo) and assets/appstore/<NN-name>.jpg
+(full size) into the post folder, plus a numbered sheet assets/appstore/sheet.jpg to choose from, and prints the
+"brand" block to put in post.json. Store screenshots
 usually wrap the phone in a headline; crop the phone out for the app slide, and choose one that shows the app's name.
 These are the app's own marketing images, so use them only for that app's own posts.
 """
@@ -48,6 +49,7 @@ def fetch(args):
     import io
     icon = Image.open(io.BytesIO(get(re.sub(r"/\d+x\d+bb\.\w+$", "/1024x1024bb.png", app["artworkUrl512"]))))
     icon.convert("RGB").resize((256, 256)).save(assets / "app-icon.png")
+    icon.convert("RGB").save(assets / "app-icon-1024.png")  # full size, for a reel's closing logo
     saved = []
     for k, url in enumerate(app.get("screenshotUrls") or [], 1):
         name = re.search(r"/([^/]+?)\.(?:png|jpg|jpeg)/[^/]+$", url)
