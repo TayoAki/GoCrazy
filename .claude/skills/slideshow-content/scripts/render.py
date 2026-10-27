@@ -83,6 +83,9 @@ body{{width:{w}px;height:{h}px;overflow:hidden;font-family:Inter,sans-serif;colo
      position:relative;display:flex;flex-direction:column;padding:96px 60px 48px}}
 .nb{{white-space:nowrap}}
 .count{{position:absolute;top:44px;right:56px;font:700 30px Inter;color:{t['faint']}}}
+.brand{{position:absolute;top:36px;left:56px;display:flex;align-items:center;gap:12px;font:800 28px Inter;color:{t['ink']}}}
+.brand img{{width:46px;height:46px;border-radius:11px}}
+.brand.dark{{color:#fff;text-shadow:0 2px 10px rgba(0,0,0,.4)}}
 .title{{text-align:center;font:900 62px/1.08 Inter;letter-spacing:-1.5px;text-wrap:balance}}
 .title .em{{color:{t['accent']}}}
 .photo{{position:relative;border-radius:22px;overflow:hidden;background:#EEF0F3;border:4px dashed #C6CBD3;display:flex;
@@ -103,7 +106,18 @@ body{{width:{w}px;height:{h}px;overflow:hidden;font-family:Inter,sans-serif;colo
     def page(self, i, body, css="", count=True):
         counter = f'<div class="count">{i}/{self.total}</div>' if count and self.spec.get("counter", True) else ""
         return (f"<!doctype html><html><head><meta charset='utf-8'><style>{self.css()}{css}</style></head>"
-                f"<body>{body}{counter}</body></html>")
+                f"<body>{body}{self.brand_mark(i)}{counter}</body></html>")
+
+    def brand_mark(self, i):
+        """The product's icon and name, small, top left, on the slide types the spec's "brand" lists (by default
+        every slide but the cover and the app slide, which shows the brand big)."""
+        brand = self.spec.get("brand") or {}
+        kind = self.spec["slides"][i - 1].get("type")
+        if not brand.get("name") or kind not in brand.get("on", ["photo", "compare", "item", "list"]):
+            return ""
+        icon = self.folder / brand["icon"] if brand.get("icon") else None
+        img = f'<img src="{data_uri(icon)}">' if icon and icon.exists() else ""
+        return f'<div class="brand{" dark" if kind in ("cover", "photo") else ""}">{img}<span>{text(brand.get("text") or brand["name"])}</span></div>'
 
     def save_line(self, slide, cls="save"):
         line = slide.get("save_line", self.spec.get("save_line")) if slide.get("save", False) else None
@@ -209,7 +223,21 @@ body{{width:{w}px;height:{h}px;overflow:hidden;font-family:Inter,sans-serif;colo
         .photo.screenbox{{flex:1;margin:44px 120px 36px}}
         .sub{{margin:0 20px}}
         """
-        body = (f'<div class="title">{text(s.get("title"))}</div>' + self.screen(s.get("screen"), s.get("screen_brief"))
+        brand = self.spec.get("brand") or {}
+        icon = self.folder / brand["icon"] if brand.get("icon") else None
+        header = ""
+        if brand.get("name") and s.get("brand_header", True):
+            css += """
+        .apphead{display:flex;align-items:center;justify-content:center;gap:24px;margin:-30px 0 26px}
+        .apphead img{width:120px;height:120px;border-radius:27px;box-shadow:0 10px 24px rgba(0,0,0,.18)}
+        .apphead b{font:900 72px Inter;letter-spacing:-2px}
+        .apphead small{display:block;font:700 28px Inter;color:#6b7280;letter-spacing:0;margin-top:4px}
+        .title{font-size:54px}
+        """
+            img = f'<img src="{data_uri(icon)}">' if icon and icon.exists() else ""
+            where = f'<small>{text(brand["where"])}</small>' if brand.get("where") else ""
+            header = f'<div class="apphead">{img}<div><b>{text(brand["name"])}</b>{where}</div></div>'
+        body = (header + f'<div class="title">{text(s.get("title"))}</div>' + self.screen(s.get("screen"), s.get("screen_brief"))
                 + (f'<div class="sub">{text(s.get("subtitle"))}</div>' if s.get("subtitle") else "") + self.save_line(s))
         return self.page(i, body, css)
 

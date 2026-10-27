@@ -22,6 +22,7 @@ One file per post, in the post's folder (`briefs/<slug>/post.json`). The worked 
 | `save_line` | The save ask. It appears on slides with `"save": true` (usually the cover and the last slide) |
 | `source_line` | Small grey line under every `compare` and `item` slide saying where the numbers come from. A slide's own `"source"` overrides it (`""` hides it) |
 | `counter` | The `n/N` page count top right (default on) |
+| `brand` | `{"name": "Weight Class", "icon": "assets/app-icon.png", "where": "Free on the App Store"}`. It puts the product's icon and name, small, top left on every content slide. The app slide also opens with the icon and name big, and `where` under it. `on` lists the slide types that get the small tag (default `photo`, `compare`, `item`, `list`; the cover stays clean). `text` replaces the name in the small tag |
 
 ## Text
 
@@ -110,11 +111,12 @@ unless the slide sets `"source"`.
 
 ### `app`: the product, once, last
 ```json
-{"type": "app", "title": "Check any swap yourself in Weight Class", "screen": "assets/phone-search.png",
+{"type": "app", "title": "Check any swap yourself", "screen": "assets/app-home.jpg",
  "screen_brief": "the app's food search on a phone",
  "subtitle": "Every number here is a USDA entry. Search it in Weight Class, free on iPhone.", "save": true}
 ```
-`screen` is an image path relative to the post folder. For an app, use a real screenshot of it doing the thing the
+With a `brand`, the slide opens with the icon and name (`"brand_header": false` turns that off). `screen` is an
+image path relative to the post folder. For an app, use a real screenshot of it doing the thing the
 post promises (searching the food, logging the order). For a club, shop or service, use a real photo of it, and put
 when, where and how to join in the subtitle. Without it the slide shows a placeholder with `screen_brief`. The
 title says what the product does for this post's reader, not the product's slogan.

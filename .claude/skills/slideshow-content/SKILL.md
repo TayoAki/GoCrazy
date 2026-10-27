@@ -41,7 +41,8 @@ The last slide tells people what to do next, so everything on it has to be true.
 shop, a service, a local club or a creator. Read its own pages (website, App Store or shop page, booking or sign-up
 page, social profiles) and write `product.md`.
 
-- **For an app or product:**
+- **For an app:** run `python3 $S/app-store.py fetch <App Store link> briefs/<slug>`. It gets the app's real name,
+  price, icon and store screenshots into `assets/`, and prints the `brand` block for `post.json`. Then note:
   - what it does
   - the price model ("free to download, with Premium")
   - platforms
@@ -220,6 +221,13 @@ Pick the content slide that matches the references' layout.
 
   If you only have a stand-in (say, a screenshot from the website), use it, mark it as one, and ask for the real
   image.
+- **The product's name has to be in the pictures, not only in the caption.** Set `brand` in `post.json`; the
+  Weight Class drafts went out without it and that was the miss. It puts the icon and name in a small tag on every
+  content slide, the way MenuFit marked each slide of its 751K-play post. The app slide then opens with the icon and
+  name big.
+  - Use a real store screenshot that shows the name inside the app, usually the home screen. Cut it out of the store
+    image with `app-store.py crop … --box x1,y1,x2,y2`.
+  - Keep the cover clean: none of the winning app accounts branded their cover.
 
 ## 7. Check every number against a primary source
 

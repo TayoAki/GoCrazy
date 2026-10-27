@@ -7,6 +7,11 @@
  },
  "save_line": "↓ SAVE THIS FOR YOUR NEXT GROCERY RUN ↓",
  "source_line": "Per serving · USDA FoodData Central",
+ "brand": {
+  "name": "Weight Class",
+  "icon": "assets/app-icon.png",
+  "where": "Free on the App Store"
+ },
  "slides": [
   {
    "type": "cover",
@@ -130,10 +135,10 @@
   },
   {
    "type": "app",
-   "title": "Check any swap yourself in Weight Class",
-   "screen": "assets/phone-search.png",
-   "screen_brief": "the app's food search on a phone",
-   "subtitle": "Every number here is a USDA entry. Search it in Weight Class, free on iPhone.",
+   "title": "Check any swap yourself",
+   "screen": "assets/app-home.jpg",
+   "screen_brief": "Weight Class's home screen (from its App Store listing)",
+   "subtitle": "Every number here is a USDA entry.\nSearch it in Weight Class.",
    "save": true
   }
  ]
