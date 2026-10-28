@@ -22,6 +22,7 @@ One file per post, in the post's folder (`briefs/<slug>/post.json`). The worked 
 | `save_line` | The save ask. It appears on slides with `"save": true` (usually the cover and the last slide) |
 | `source_line` | Small grey line under every `compare` and `item` slide saying where the numbers come from. A slide's own `"source"` overrides it (`""` hides it) |
 | `counter` | The `n/N` page count top right (default on) |
+| `disclosure` | The paid-post label, e.g. `"Ad"`: a small white tag top left of the cover, on the picture itself, as the FTC asks for paid endorsements in pictures. `"disclosure_on": "all"` puts it on every slide. Any post someone is paid for needs it, plus TikTok's content disclosure setting and "Ad" in the caption |
 | `brand` | `{"name": "Weight Class", "icon": "assets/app-icon.png", "where": "Free on the App Store"}`. It puts the product's icon and name, small, top left on every content slide. The app slide also opens with the icon and name big, and `where` under it. `on` lists the slide types that get the small tag (default `photo`, `compare`, `item`, `list`; the cover stays clean). `text` replaces the name in the small tag |
 
 ## Text

@@ -52,6 +52,22 @@ a talking head, a voiceover, a green screen or text over a clip (`scripts/reel.p
 TikTok as a draft (`scripts/send-drafts.py`). Posts are written to `briefs/`, which is
 gitignored like `data/`.
 
+## Campaign briefs and the TikTok + FTC check
+
+Two skills that work as a pair for paid clipping and UGC campaigns (Whop, Content Rewards, an agency's brief):
+
+- [`.claude/skills/campaign-brief/`](.claude/skills/campaign-brief/SKILL.md) (step 1) reads every page a campaign
+  links to with Firecrawl (`scripts/explore.py`) and writes each rule in its own words into `campaign.json`. It works
+  out what the pay really means (`scripts/campaign.py`), and writes a creator brief whose formats, hooks and example
+  post come from the slideshow skill's outlier research.
+- [`.claude/skills/tiktok-ftc-check/`](.claude/skills/tiktok-ftc-check/SKILL.md) (step 2) rules on the campaign and
+  the brief against TikTok's Community Guidelines, Branded Content Policy, disclosure and AI-label rules, and the
+  FTC's Endorsement Guides, testimonials rule and health-claim guidance. It cites each rule with a quote
+  (`references/rules.md`; `scripts/rules.py` keeps the sources current and `scripts/lint.py` flags every line to rule
+  on), then writes `compliance.md` and the checked brief creators get.
+
+Firecrawl needs `FIRECRAWL_API_KEY` in `.env`. Campaign folders are written to `briefs/`, which is gitignored.
+
 ## Outlier research app
 
 [`research_app/`](research_app/README.md) is a local web app for the research step: it finds outliers in a niche with

@@ -86,6 +86,9 @@ body{{width:{w}px;height:{h}px;overflow:hidden;font-family:Inter,sans-serif;colo
 .brand{{position:absolute;top:36px;left:56px;display:flex;align-items:center;gap:12px;font:800 28px Inter;color:{t['ink']}}}
 .brand img{{width:46px;height:46px;border-radius:11px}}
 .brand.dark{{color:#fff;text-shadow:0 2px 10px rgba(0,0,0,.4)}}
+.ad{{position:absolute;top:38px;left:56px;background:#fff;color:#111;font:900 30px Inter;letter-spacing:1px;padding:6px 16px;
+    border-radius:10px;box-shadow:0 2px 10px rgba(0,0,0,.25)}}
+.ad.side{{left:auto;right:128px}}
 .title{{text-align:center;font:900 62px/1.08 Inter;letter-spacing:-1.5px;text-wrap:balance}}
 .title .em{{color:{t['accent']}}}
 .photo{{position:relative;border-radius:22px;overflow:hidden;background:#EEF0F3;border:4px dashed #C6CBD3;display:flex;
@@ -106,7 +109,15 @@ body{{width:{w}px;height:{h}px;overflow:hidden;font-family:Inter,sans-serif;colo
     def page(self, i, body, css="", count=True):
         counter = f'<div class="count">{i}/{self.total}</div>' if count and self.spec.get("counter", True) else ""
         return (f"<!doctype html><html><head><meta charset='utf-8'><style>{self.css()}{css}</style></head>"
-                f"<body>{body}{self.brand_mark(i)}{counter}</body></html>")
+                f"<body>{body}{self.brand_mark(i)}{self.disclosure(i)}{counter}</body></html>")
+
+    def disclosure(self, i):
+        """The paid-post label ("Ad"), on the picture itself, as the FTC asks for endorsements in pictures: on the
+        cover by default, on every slide with "disclosure_on": "all"."""
+        label = self.spec.get("disclosure")
+        if not label or (i > 1 and self.spec.get("disclosure_on", "cover") != "all"):
+            return ""
+        return f'<div class="ad{" side" if i > 1 else ""}">{text(label)}</div>'
 
     def brand_mark(self, i):
         """The product's icon and name, small, top left, on the slide types the spec's "brand" lists (by default
