@@ -23,9 +23,9 @@ Refresh needs `FIRECRAWL_API_KEY` in the repo's `.env`. If one is missing, ask t
 paste it. When `refresh` says a source CHANGED, read it (`rules.py show <id>`) and update `references/rules.md` before
 checking anything.
 
-**TikTok's Community Guidelines pages.** Firecrawl doesn't serve them, so `refresh` reports them as FAILED. Read them
-with a normal web fetch instead (the quotes marked (CG) in rules.md came that way). Don't work around a block with
-other tools.
+**TikTok's Community Guidelines pages.** Firecrawl doesn't serve them, so `refresh` skips them and `status` lists them
+as "web fetch". Read them with a normal web fetch instead (the quotes marked (CG) in rules.md came that way). Don't
+work around a block with other tools.
 
 ## 2. Lint
 
