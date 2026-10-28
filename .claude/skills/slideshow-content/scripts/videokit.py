@@ -69,29 +69,49 @@ def key(path, *extra):
     return hashlib.sha1(f"{Path(path).resolve()}|{st.st_size}|{st.st_mtime}|{extra}".encode()).hexdigest()[:12]
 
 
-def words(src, work, start=0.0, end=None, model="small", language=None):
-    """Every spoken word with its start and end in the source's own time (seconds), cached in work/words-<key>.json.
-    Fix misheard names in that file by hand (keep the timings); the edit is kept until the source changes."""
+def words_file(src, work, model="small", language=None):
+    return work / f"words-{Path(src).stem}-{key(src, model, language)}.json"
+
+
+def words(src, work, model="small", language=None):
+    """Every spoken word in the whole clip, with its start and end in seconds, cached in work/words-<clip>-<key>.json
+    (one word per line). match.py and reel.py share it, whatever the trim. Fix misheard names, capitals and
+    punctuation there by hand; the fixes are kept until the clip itself changes."""
     work.mkdir(parents=True, exist_ok=True)
-    cache = work / f"words-{key(src, start, end, model, language)}.json"
+    cache = words_file(src, work, model, language)
     if not cache.exists():
         clip = work / "speech.wav"
-        cmd = ["ffmpeg", "-v", "error", "-y", "-ss", f"{start:.3f}", "-i", str(src)]
-        if end:
-            cmd += ["-t", f"{end - start:.3f}"]
-        subprocess.run(cmd + ["-vn", "-ac", "1", "-ar", "16000", str(clip)], check=True)
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(src), "-vn", "-ac", "1", "-ar", "16000", str(clip)],
+                       check=True)
         print("transcribing (the first run downloads the speech model)...", flush=True)
         tmp = work / "words.tmp.json"
-        args = ["words", clip, tmp, "--model", model] + (["--language", language] if language else [])
-        vision(*args)
+        vision("words", clip, tmp, "--model", model, *(["--language", language] if language else []))
         found = json.loads(tmp.read_text())
-        for w in found:
-            w["s"], w["e"] = round(w["s"] + start, 3), round(w["e"] + start, 3)
-        cache.write_text(json.dumps(found, indent=0, ensure_ascii=False))
+        cache.write_text("[\n" + ",\n".join(json.dumps(w, ensure_ascii=False) for w in found) + "\n]\n")
         tmp.unlink()
         clip.unlink()
-        print(f"{len(found)} words -> {cache} (fix any misheard names there, keeping the times)")
+        print(f"{len(found)} words -> {cache} (fix misheard names, capitals and punctuation there; keep the times)")
     return json.loads(cache.read_text())
+
+
+def levels(src, start, end, hop=0.01):
+    """The sound's level in dB, every `hop` seconds, from start to end."""
+    import numpy as np
+    raw = subprocess.run(["ffmpeg", "-v", "error", "-ss", f"{start:.3f}", "-t", f"{end - start:.3f}", "-i", str(src),
+                          "-vn", "-ac", "1", "-ar", "16000", "-f", "s16le", "-"], capture_output=True, check=True).stdout
+    x = np.frombuffer(raw, np.int16).astype(np.float32) / 32768
+    n = int(16000 * hop)
+    frames = x[:len(x) // n * n].reshape(-1, n)
+    return 20 * np.log10(np.sqrt((frames ** 2).mean(1)) + 1e-9)
+
+
+def loudness(path):
+    """ffmpeg's loudnorm measurement of a file's sound, for a second, exact pass."""
+    run = subprocess.run(["ffmpeg", "-hide_banner", "-i", str(path), "-vn", "-af",
+                          "loudnorm=I=-14:TP=-1.5:LRA=11:print_format=json", "-f", "null", "-"],
+                         capture_output=True, text=True)
+    text = run.stderr[run.stderr.rindex("{"):run.stderr.rindex("}") + 1]
+    return json.loads(text)
 
 
 def face(src, work):

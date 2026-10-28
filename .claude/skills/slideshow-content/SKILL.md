@@ -399,8 +399,11 @@ python3 $S/send-drafts.py send briefs/<slug> --account <id> --caption-file brief
    - The hook follows the winners' pattern, with what's true for this clip.
    - The captions copy the matches' style.
    - B-roll and backgrounds are real: the person's own, the product's screenshots, or licensed photos.
-   - For a talking clip, read `out/work/words-*.json` after the first build and fix misheard names.
-4. **Check** `out/reel-preview.jpg` and a one-frame-a-second strip, then watch it with the sound on.
+   - Work through the `_check` list, then delete it.
+   - For a talking clip, read `out/work/words-<clip>-*.json` and fix misheard names, capitals and punctuation.
+   - Write where every clip, photo and background came from in `assets/SOURCES.md`.
+4. **Check** `out/reel-preview.jpg` and `out/reel-strip.jpg` (one frame a second), then have the person watch it
+   with the sound on.
 5. **Caption and send.** The caption copies the matches' ask (`matches.md` lists each one). Send the video as a
    draft.
 

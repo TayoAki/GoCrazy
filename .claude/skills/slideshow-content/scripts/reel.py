@@ -18,6 +18,7 @@ The talking layouts transcribe the speech first (out/work/words-*.json, kept bet
 import base64
 import html
 import json
+import math
 import re
 import subprocess
 import sys
@@ -26,7 +27,7 @@ from pathlib import Path
 from PIL import Image, ImageFilter, ImageOps
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from videokit import face as find_face, key, probe, vision, words as transcribe  # noqa: E402
+from videokit import face as find_face, key, levels, loudness, probe, vision, words as transcribe  # noqa: E402
 
 SKILL = Path(__file__).resolve().parent.parent
 FONTS = SKILL / "assets/fonts"
@@ -71,7 +72,7 @@ def hook_css(spec, layout):
     size = spec.get("hook_size", 38 if layout == "text" else 46)
     b1 = {"box": f"background:#000;color:#fff;font:700 {size}px/1.22 Inter;padding:8px 18px;border-radius:8px",
           "white-box": f"background:#fff;color:#111;font:700 {size}px/1.22 Inter;padding:8px 18px;border-radius:8px",
-          "outline": f"color:#fff;font:900 {size}px/1.15 Inter;text-shadow:{OUTLINE}"}[style]
+          "outline": f"color:#fff;font:900 {size}px/1.15 Inter;text-shadow:{OUTLINE};word-spacing:.14em"}[style]
     return f"""{font(700)}{font(900)}*{{margin:0;padding:0}} html,body{{background:transparent;width:{W}px;height:{H}px}}
     .wrap{{position:absolute;top:{spec.get('text_top', 200)}px;left:0;right:0;display:flex;flex-direction:column;
           align-items:center;gap:12px}}
@@ -212,7 +213,7 @@ def caption_track(out, spoken, caps, length):
     box = caps.get("style", "outline") == "box"
     css = f"""{font(900)}*{{margin:0;padding:0}} html,body{{background:transparent;width:{W}px;height:{H}px}}
     .cap{{position:absolute;left:130px;right:130px;top:{y:.0f}px;transform:translateY(-50%);text-align:center;
-         font:900 {size}px/1.18 Inter;color:#fff;{'' if box else f'text-shadow:{OUTLINE};'}
+         font:900 {size}px/1.18 Inter;color:#fff;{'' if box else f'text-shadow:{OUTLINE};word-spacing:.14em;'}
          {'text-transform:uppercase;' if caps.get('upper') else ''}}}
     .bx{{background:#000;padding:4px 14px;border-radius:10px;-webkit-box-decoration-break:clone;box-decoration-break:clone}}
     .w{{visibility:hidden}} .on{{visibility:visible}} .hl{{color:{color}}} .now{{color:{active or 'inherit'}}}"""
@@ -221,8 +222,8 @@ def caption_track(out, spoken, caps, length):
     for g, group in enumerate(groups):
         for k, w in enumerate(group):
             spans = []
-            for j, x in enumerate(group):
-                cls = ["w"] + (["on"] if j <= k else []) + (["now"] if j == k and active else [])
+            for j, x in enumerate(group[:k + 1]):  # only the words said so far, so the line stays centred
+                cls = ["w", "on"] + (["now"] if j == k and active else [])
                 bare = re.sub(r"\W", "", x["w"].lower())
                 if bare in marked or re.search(r"\d", x["w"]):
                     cls.append("hl")
@@ -259,17 +260,43 @@ def caption_track(out, spoken, caps, length):
 
 # --- the talking layouts: cut, frame, transcribe -------------------------------------------------------------------
 
-def keep_segments(spoken, start, end, gap):
-    """The stretches to keep when pauses longer than `gap` seconds are cut, snapped to whole frames."""
-    if not gap or not spoken:
+def keep_segments(src, start, end, gap, hop=0.01):
+    """The stretches to keep when every silence longer than `gap` seconds is cut, snapped to whole frames.
+
+    The cuts come from the sound itself, not from the transcript: speech recognition can place a word half a second
+    off, and a cut there takes the word with it. Silence is anything 24 dB under the clip's loud parts; a blip under
+    60 ms (a click) counts as silence. Each cut keeps 0.12 s after the speech and 0.10 s before it, the clip keeps
+    0.10 s before the first word and 0.30 s after the last, so every cut lands in a pause."""
+    db = levels(src, start, end, hop)
+    if not gap or not len(db):
         return [(start, end)]
-    segs, a, last = [], max(start, spoken[0]["s"] - 0.15), spoken[0]["e"]
-    for w in spoken[1:]:
-        if w["s"] - last > gap:
-            segs.append((a, min(end, last + 0.12)))
-            a = max(segs[-1][1], w["s"] - 0.08)
-        last = max(last, w["e"])
-    segs.append((a, min(end, last + 0.35)))
+    loud = db > max(-60.0, float(sorted(db)[int(len(db) * 0.95)]) - 24)
+    k = 0
+    while k < len(loud):  # drop clicks
+        if loud[k]:
+            j = k
+            while j < len(loud) and loud[j]:
+                j += 1
+            if j - k < 6:
+                loud[k:j] = False
+            k = j
+        else:
+            k += 1
+    talk = [k for k in range(len(loud)) if loud[k]]
+    if not talk:
+        return [(start, end)]
+    first, last = start + talk[0] * hop, start + (talk[-1] + 1) * hop
+    segs, a, run_from = [], max(start, first - 0.10), None
+    for k in range(talk[0], talk[-1] + 1):
+        if not loud[k] and run_from is None:
+            run_from = k
+        elif loud[k] and run_from is not None:
+            quiet_from, quiet_to = start + run_from * hop, start + k * hop
+            if quiet_to - quiet_from >= gap:
+                segs.append((a, quiet_from + 0.12))
+                a = quiet_to - 0.10
+            run_from = None
+    segs.append((a, min(end, last + 0.30)))
     snap = lambda t: start + round((t - start) * FPS) / FPS  # noqa: E731
     return [(snap(a), snap(b)) for a, b in segs if snap(b) - snap(a) >= 2 / FPS]
 
@@ -318,26 +345,41 @@ def speaking_base(post, spec, work):
     if not info["audio"]:
         raise SystemExit(f"{spec['video']} has no sound. Use \"layout\": \"text\" for a clip with no talking.")
     start, end = spec.get("trim") or (0.0, info["duration"])
-    said = transcribe(src, work, start, end if spec.get("trim") else None, spec.get("model", "small"), spec.get("language"))
+    said = [w for w in transcribe(src, work, spec.get("model", "small"), spec.get("language"))
+            if w["e"] > start and w["s"] < end]
     if not said:
         raise SystemExit("No speech found. Use \"layout\": \"text\" for a clip with no talking.")
-    segs = keep_segments(said, start, end, spec.get("cut_pauses", 0.5))
+    segs = keep_segments(src, start, end, spec.get("cut_pauses", 0.5))
     box, seen = crop_box(src, info, spec, work)
     to_out = mapper(segs)
     spoken = [{"w": w["w"], "s": to_out(w["s"]), "e": to_out(w["e"])} for w in said]
     base = work / f"base-{key(src, segs, box)}.mp4"
     if not base.exists():
+        for old in [*work.glob("base-*.mp4"), *work.glob("base-*.loud.json"), *work.glob("mask-*.mkv")]:
+            old.unlink()  # an earlier cut or framing: no longer used
         sel = "+".join(f"between(t,{a - start:.4f},{b - start:.4f})" for a, b in segs)
         cw, ch, x, y = box
-        print(f"cutting {len(segs) - 1} pauses and framing {cw}x{ch} at {x},{y}...", flush=True)
+        print(f"framing {cw}x{ch} at {x},{y} and cutting the pauses...", flush=True)
         run(["ffmpeg", "-v", "error", "-y", "-ss", f"{start:.3f}", "-t", f"{end - start:.3f}", "-i", str(src),
              "-filter_complex",
              f"[0:v]fps={FPS},select='{sel}',setpts=N/FRAME_RATE/TB,crop={cw}:{ch}:{x}:{y},"
              f"scale={W}:{H}:flags=lanczos,setsar=1,format=yuv420p[v];"
-             f"[0:a]aselect='{sel}',asetpts=N/SR/TB,loudnorm=I=-14:TP=-1.5:LRA=11,aresample=48000[a]",
+             f"[0:a]aselect='{sel}',asetpts=N/SR/TB,aresample=48000[a]",
              "-map", "[v]", "-map", "[a]", "-c:v", "libx264", "-crf", "16", "-preset", "medium", "-c:a", "aac",
-             "-b:a", "192k", str(base)])
+             "-b:a", "256k", str(base)])
+        print(f"kept {sum(b - a for a, b in segs):.1f} s of {end - start:.1f} s, cutting {len(segs) - 1} pauses")
+    loud = base.with_suffix(".loud.json")
+    if not loud.exists():
+        loud.write_text(json.dumps(loudness(base)))
     return base, spoken, segs, to_out, seen
+
+
+def level_voice(base):
+    """Two-pass loudness levelling to -14 LUFS, what TikTok and Instagram play at (one pass falls about 2 dB short)."""
+    m = json.loads(base.with_suffix(".loud.json").read_text())
+    return (f"loudnorm=I=-14:TP=-1.5:LRA=11:measured_I={m['input_i']}:measured_TP={m['input_tp']}:"
+            f"measured_LRA={m['input_lra']}:measured_thresh={m['input_thresh']}:offset={m['target_offset']}:"
+            f"linear=true,aresample=48000")
 
 
 def fill(src, dest, focus="50% 50%", mode="cover"):
@@ -474,7 +516,8 @@ def build_speaking(post, spec, out, layout):
     first = sum(1 for x in inputs if x == "-i")
     hooks, hook_in = hook_filters(states, first, "v2", "hooked")
     fc += hooks + f"[hooked]trim=duration={clip_s:.3f},setpts=PTS-STARTPTS,setsar=1,format=yuv420p[clip];"
-    return fc, inputs + hook_in, clip_s, "0:a"
+    fc += f"[0:a]{level_voice(base)}[voice];"
+    return fc, inputs + hook_in, clip_s, "voice"
 
 
 def preview(reel, dest, length):
@@ -490,6 +533,9 @@ def preview(reel, dest, length):
     for k, im in enumerate(shots):
         sheet.paste(im, (270 * k, 0))
     sheet.save(dest, quality=85)
+    rows = math.ceil(length / 8)
+    run(["ffmpeg", "-v", "error", "-y", "-i", str(reel), "-vf", f"fps=1,scale=180:320,tile=8x{rows}", "-frames:v", "1",
+         str(dest.parent / "reel-strip.jpg")])
 
 
 def build(post):
@@ -511,7 +557,7 @@ def build(post):
     else:
         fc += "[clip]null[out]"
     total = clip_s + end_s
-    if audio:  # the person's voice, with silence under the closing logo
+    if audio:  # the person's voice (or the clip's own sound), with silence under the closing logo
         fc += f";[{audio}]apad=whole_dur={total:.3f}[aout]"
         audio_map = "[aout]"
     else:  # silent: the music is added in the app
@@ -528,7 +574,7 @@ def build(post):
         raise SystemExit(f"reel.mp4 has pixel shape {sar}, not 1:1; players would stretch it")
     preview(reel, out / "reel-preview.jpg", total)
     print(f"out/reel.mp4: {layout}, {clip_s:.1f} s" + (f" + {end_s:.1f} s closing logo" if card else "")
-          + f", {W}x{H}. Look at out/reel-preview.jpg, then watch it.")
+          + f", {W}x{H}. Check out/reel-preview.jpg and out/reel-strip.jpg (one frame a second).")
 
 
 if __name__ == "__main__":

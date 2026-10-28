@@ -28,8 +28,10 @@ It writes:
   structure, sound and ask, then what the top matches have in common.
 - `match/sheet.jpg`: the person's frames on top, each match's frames below. Look at it: a match whose frames look
   nothing like the clip is a weak one, whatever its score.
-- `reel.suggested.json`: a starting `reel.json` in the layout that fits, with the winners' hooks listed to write from.
-  The hook itself is left blank: write it in their pattern, from what's true about this clip.
+- `reel.suggested.json`: a starting `reel.json` in the layout that fits, with the winners' hooks listed to write from
+  and a `_check` list (the trim, the captions, the end card, the AI's notes on the clip). The hook itself is left
+  blank: write it in their pattern, from what's true about this clip. Captions are on only when at least half the
+  talking matches caption word by word.
 
 `match/video.json` keeps the description. With no AI set up (no `claude` command, no `OPENROUTER_API_KEY`), or with
 `--no-ai`, it writes the frames and the instructions to `match/describe.md`: look at the frames, write
@@ -39,7 +41,8 @@ On the Weight Class research, it put @movementwithjulie's two before/after reels
 outlier found by hand, and a talking clip got talking-head winners.
 
 **Matches come from the niches that were researched.** A clip about something the research never covered gets
-matches by format only (the subject scores near zero). For a new niche, run the research first (SKILL.md step 2).
+matches by format only, and `matches.md` says so at the top. Copy how those are made, not what they say. For a new
+niche, run the research first (SKILL.md step 2).
 
 ## 2. The three layouts
 
@@ -88,16 +91,18 @@ The clip is cropped to the centre of the 9:16 frame, so film it upright. The bod
 | --- | --- |
 | `crop` | `"face"` (default: frames 9:16 on the face it finds), `"center"`, or `{"x": 0.3, "y": 0.4}` (where the face is, as fractions) |
 | `zoom` | Crop in further. 1 by default. Above 1 it enlarges the footage, and a 720p source gets soft past about 1.3 |
-| `cut_pauses` | Cut every pause longer than this (seconds), a jump cut, the way talking heads are edited. Default 0.5; `0` keeps everything |
+| `cut_pauses` | Cut every silence longer than this (seconds), a jump cut, the way talking heads are edited. Default 0.5; `0` keeps everything. The cuts come from the sound, not the transcript (speech recognition can place a word half a second off), so each lands in a pause, and the clip opens on the first word |
 | `captions` | Word-by-word captions, or `false` for none. `words` per screen (3), `style` `outline` or `box`, `at` (the height as a fraction: 0.66 for `talking`, 0.52 for `green-screen`), `size` (64 px), `highlight` (words in the accent `color`, `#FFD400`; numbers always are), `active` (a colour for the word being said), `upper` (capitals) |
 | `broll` | `[{"src": "assets/meal.jpg", "at": 12.4, "seconds": 2}]`: a photo or clip cuts in full-frame over the voice. `at` is in the clip's own time (read it off the transcript); `focus` moves a photo's crop; `from` starts a clip part-way. A voiceover is this with b-roll over most of it |
 | `language`, `model` | For the transcription: a language code (default: detected) and the Whisper model (`small`) |
 
-The speech is transcribed first, to `out/work/words-*.json`: every word with its start and end in the clip's own
-time. **Read it, and fix misheard names** ("Mark van de Hyde" for "Mark Vande Hei", product names), keeping the
-times. The captions come from it, and the fixed file is kept until the clip changes.
+The whole clip is transcribed once, to `out/work/words-<clip>-<key>.json`: one word per line, with its start and end
+in the clip's own seconds. match.py and reel.py share it, whatever the trim. **Read it, and fix misheard names,
+capitals and punctuation** ("Mark van de Hyde" for "Mark Vande Hei", product names), keeping the times. The captions
+come from it, and the fixes are kept until the clip itself changes (a different `model` or `language` starts a new
+file).
 
-The voice is levelled to -14 LUFS, the loudness TikTok and Instagram play at.
+The voice is levelled to -14 LUFS (two passes, within about a decibel), the loudness TikTok and Instagram play at.
 
 ### `green-screen`: the person cut out in front of what they're talking about
 
@@ -118,10 +123,13 @@ them can come along with them.
   caption, and the post gets TikTok's AI-generated label.
 - **The hook is true for this clip.** Copy the winners' pattern ("I gave myself 365 days…", "POV: …"), not their
   facts.
-- **Check before sending.** `out/reel-preview.jpg` shows six moments. Make a strip of one frame a second
-  (`ffmpeg -i out/reel.mp4 -vf "fps=1,scale=180:320,tile=8x4" -frames:v 1 strip.jpg`) to check every caption and
-  cut, then watch it with the sound on: captions in time, no cut in the middle of a word, the hook clear of the
-  face.
+- **Rights.** Write where every clip, b-roll photo and background came from in `assets/SOURCES.md`, as
+  `photos/SOURCES.md` does for slides. Footage of other identifiable people, or another organisation's material, needs
+  their permission for a post that promotes something, and must never suggest they endorse the product.
+- **Check before sending.** `out/reel-preview.jpg` shows six moments and `out/reel-strip.jpg` one frame a second of
+  the whole reel: check every caption against the transcript, the hook clear of the face, and the b-roll on the
+  words it illustrates. Then have the person watch it with the sound on (an agent can't listen): captions in time
+  and the cuts natural.
 - **Sound.** `text` reels are silent unless `keep_audio`: add the music in the app, so it's a sound people can tap
   through to. Talking reels keep the voice; a quiet track can go under it in the app.
 

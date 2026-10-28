@@ -55,7 +55,11 @@ LAYOUT = {"talking_head": "talking", "setting_change": "talking", "shot_angle_ch
 STOP = set("""a an the and or but if of to in on at for with from by is are was were be been it its this that these those
 i im i'm me my we our you your he she they them his her their what which who how when where why so just very really
 than then there here not no do does did done have has had can could will would should get got make made one two all
-about into out up down over more most some any like as also only even much many own same new day days video""".split())
+about into out up down over more most some any like as also only even much many own same new day days video
+such whether while show shows showing first year years back quiet slow viewer viewers answers answer next being
+life things thing people time times week weeks month months today every still way ways look looks makes using used take
+keep going want need know think says said tell real actually them there each other well good great best better lot""".split())
+SUBJECT_MATCH, ON_SUBJECT = 0.66, 0.85  # a subject score that counts as shared, and one that means "about the same thing"
 
 
 def connect():
@@ -178,12 +182,25 @@ def candidates(conn):
 TRAITS = (("angle", 1.0), ("story_type", 0.7), ("video_type", 0.7), ("hook_pattern", 0.4), ("delivery", 0.3))
 
 
-def rarity(cands):
-    """How rare each trait value is across the research: a shared rare trait ("transformation", 12 of 264) says far
-    more about two videos than a common one ("tip_hack", 125 of 264)."""
-    n = len(cands)
-    counts = Counter((name, value(c["fields"], name)) for c in cands for name, _ in TRAITS)
-    return lambda name, v: math.log((n + 1) / (counts[(name, v)] + 1))
+def subject(fields):
+    """The words of what a video is about, from its description (captions and transcripts add too much filler)."""
+    return tokens(f"{value(fields, 'topic')} {value(fields, 'value_summary')}")
+
+
+class Rarity:
+    """How rare each trait value and each word is across the research: a shared rare trait ("transformation", 12 of
+    264) or word ("calories") says far more about two videos than a common one ("tip_hack", 125 of 264; "life")."""
+
+    def __init__(self, cands):
+        self.n = len(cands)
+        self.traits = Counter((name, value(c["fields"], name)) for c in cands for name, _ in TRAITS)
+        self.words = Counter(w for c in cands for w in subject(c["fields"]))
+
+    def trait(self, name, v):
+        return math.log((self.n + 1) / (self.traits[(name, v)] + 1))
+
+    def word(self, w):
+        return math.log((self.n + 1) / (self.words[w] + 1))
 
 
 def score(mine, measured, cand, project, rare):
@@ -206,15 +223,18 @@ def score(mine, measured, cand, project, rare):
     for name, weight in TRAITS:
         v = mine.get(name)
         if v and v not in ("none", "niche_specific") and v == value(f, name):
-            s += weight * rare(name, v)
+            s += weight * rare.trait(name, v)
             why.append(f"{name.replace('_', ' ')}: {v.replace('_', ' ')}")
-    a = tokens(f"{mine.get('topic')} {mine.get('value_summary')} {' '.join(measured['transcript'])[:400]}")
-    b = tokens(f"{value(f, 'topic')} {value(f, 'value_summary')} {(cand['caption'] or '')[:300]}")
+    a, b = subject(mine), subject(f)
     shared = a & b
-    if a and b:
-        s += 4 * len(shared) / math.sqrt(len(a) * len(b))  # 4 when the words are the same, 0 when none are shared
+    cand["on_subject"] = 0.0
     if shared:
-        why.append("subject: " + ", ".join(sorted(shared)[:5]))
+        # shared words weighted by rarity: 8 when the two are about exactly the same thing, near 0 for filler words
+        weight = lambda ws: sum(rare.word(w) for w in ws)  # noqa: E731
+        cand["on_subject"] = 8 * weight(shared) / math.sqrt(weight(a) * weight(b))
+        s += cand["on_subject"]
+        if cand["on_subject"] >= SUBJECT_MATCH:
+            why.append("subject: " + ", ".join(sorted(shared, key=lambda w: -rare.word(w))[:5]))
     if cand["duration"] and measured["length_s"]:
         s += math.exp(-abs(math.log(measured["length_s"] / cand["duration"])))
     avg = value(f, "avg_shot_s")
@@ -228,6 +248,15 @@ def score(mine, measured, cand, project, rare):
 
 
 # --- 4: write it up ----------------------------------------------------------------------------------------------
+
+def length(c):
+    d = c["duration"] or (value(c["fields"], "stats") or {}).get("duration_s")
+    return f"{d:.0f} s" if d else "?"
+
+
+def pace(avg):
+    return f"a shot every {avg} s" if avg not in (None, "") else "pace unknown"
+
 
 def beat(c):
     ratio = c["ratio"] or 0
@@ -246,7 +275,8 @@ def edit_summary(top):
              or "static" in style[:40] else "no captions" if style.startswith("none") else "other text"] += 1
     audio = Counter((value(c["fields"], "audio") or "unknown").replace("_", " ") for c in top)
     ctas = Counter((value(c["fields"], "cta_mechanic") or "none").replace("_", " ") for c in top)
-    lengths = [c["duration"] for c in top if c["duration"]]
+    lengths = [c["duration"] or (value(c["fields"], "stats") or {}).get("duration_s") for c in top]
+    lengths = [d for d in lengths if d]
     shots = [float(value(c["fields"], "avg_shot_s")) for c in top if value(c["fields"], "avg_shot_s")]
     hooks = sum(1 for c in top if value(c["fields"], "written_hook"))
     return {"captions": caps.most_common(), "audio": audio.most_common(), "cta": ctas.most_common(),
@@ -264,16 +294,32 @@ def suggest(mine, measured, top, video, post):
         rel = str(Path(video).resolve().relative_to(post.resolve()))
     except ValueError:
         rel = str(Path(video).resolve())
-    spec = {"layout": layout, "video": rel, "hook": "",
+    hook_style = ("white-box" if "white box" in styles or "white background" in styles
+                  else "box" if "black box" in styles or "box" in styles else "outline")
+    check = ["Write the hook in the pattern of the winners' hooks above, with what's true for this clip."]
+    if mine.get("notes"):
+        check.append(f"The description's notes: {mine['notes']}")
+    check.append("Trim with \"trim\": [start, end] if the clip starts or ends mid-sentence or runs long: the matches' "
+                 f"median length is {edit_summary(top)['length_s']} s; this clip is {measured['length_s']} s.")
+    spec = {"layout": layout, "video": rel, "hook": "", "_check": check,
             "_hook_patterns_that_won": [value(c["fields"], "written_hook") for c in top[:5] if value(c["fields"], "written_hook")],
-            "hook_style": "white-box" if "white box" in styles or "white background" in styles
-                          else "box" if "black box" in styles or "box" in styles else "outline"}
+            "hook_style": hook_style}
+    if hook_style == "outline":
+        spec["hook_size"] = 64
     if layout == "text":
         spec.update({"second_line": "", "second_line_at": 0.33, "slow": 2.0 if measured["length_s"] < 10 else 1,
                      "headroom": 0})
     else:
-        spec.update({"cut_pauses": 0.5, "captions": {"words": 3, "style": "box" if "box" in styles and "outline" not in styles
-                     else "outline", "highlight": []}})
+        talkers = [c for c in top if value(c["fields"], "audio") in SPEECH]
+        word_by_word = sum(1 for c in talkers if "word" in (value(c["fields"], "captions") or "").lower())
+        if word_by_word * 2 >= len(talkers):
+            captions = {"words": 3, "style": "box" if "box" in styles and "outline" not in styles else "outline",
+                        "highlight": []}
+        else:
+            captions = False
+            check.append(f"Captions are off because only {word_by_word} of the {len(talkers)} talking matches caption "
+                         "word by word. Turn them on ({\"words\": 3}) if the person wants it watchable with the sound off.")
+        spec.update({"cut_pauses": 0.5, "captions": captions})
         if layout == "green-screen":
             spec["backgrounds"] = [{"src": "assets/<screenshot or photo>.jpg", "at": 0}]
         else:
@@ -285,6 +331,10 @@ def suggest(mine, measured, top, video, post):
     if icon.exists():
         spec["end_card"] = {"icon": "assets/app-icon-1024.png", "name": brand.get("name", ""),
                             "where": brand.get("where", ""), "seconds": 2.5}
+        if not brand:
+            check.append("Fill in end_card's name and where (no post.json brand to take them from).")
+    else:
+        check.append("For a closing logo, fetch the icon (app-store.py fetch) and add end_card.")
     return spec
 
 
@@ -302,17 +352,23 @@ def sheet(shots, top, dest):
         if not pics and (folder / "cover.jpg").exists():
             pics = [folder / "cover.jpg"]
         rows.append((f"{k}. {handle(c['username'])}  {beat(c).replace('×', 'x')}", pics))
-    img = Image.new("RGB", (tw * 4, len(rows) * (th + pad)), "white")
-    draw = ImageDraw.Draw(img)
-    for r, (label, pics) in enumerate(rows):
-        y = r * (th + pad)
-        draw.text((8, y + 6), label, fill="black", font=font)
-        for k, p in enumerate(pics[:4]):
+    laid, y = [], 0
+    for label, pics in rows:
+        ims = []
+        for p in pics[:4]:
             try:
                 im = Image.open(p).convert("RGB")
             except OSError:
                 continue
             im.thumbnail((tw, th))
+            ims.append(im)
+        laid.append((y, label, ims))
+        y += pad + max([im.height for im in ims] or [0]) + 6
+    img = Image.new("RGB", (tw * 4, y), "white")
+    draw = ImageDraw.Draw(img)
+    for y, label, ims in laid:
+        draw.text((8, y + 6), label, fill="black", font=font)
+        for k, im in enumerate(ims):
             img.paste(im, (k * tw + (tw - im.width) // 2, y + pad))
     img.save(dest, quality=85)
 
@@ -320,17 +376,23 @@ def sheet(shots, top, dest):
 def write(mine, measured, top, summary, spec, out, video):
     md = [f"# Outliers that match `{Path(video).name}`", "",
           f"**Your video:** {measured['length_s']} s, {measured['width']}x{measured['height']}, "
-          f"{'talking' if measured['has_speech'] else 'no talking'}, a shot change every {measured['avg_shot_s']} s. "
+          f"{'talking' if measured['has_speech'] else 'no talking'}, "
+          f"{'one continuous shot' if not measured['cuts'] else pace(measured['avg_shot_s'])}. "
           f"Format: **{(mine.get('format') or 'unknown').replace('_', ' ')}**, audio {mine.get('audio')}, angle "
           f"{mine.get('angle')}, video type {mine.get('video_type')}, story {mine.get('story_type')}.", "",
-          f"> {mine.get('topic') or ''}", "", "## The matches", "",
+          f"> {mine.get('topic') or ''}", "",
+          *(["**These match on format only.** None of them shares the clip's subject: the research has no winning videos "
+             "about it. Copy how they're made (text, captions, pace, length), not what they say, and look at the sheet: "
+             "drop any whose frames look nothing like the clip. To match on subject too, research this niche first.", ""]
+            if max(c["on_subject"] for c in top) < ON_SUBJECT else []),
+          "## The matches", "",
           "Score: how alike the two videos are (the same format counts most, then shared rare traits and subject). "
           "A score well under the top one is a looser match: read its row before copying it.", "",
           "| # | Score | Creator | Beat their size by | Views | Comments | Length | Format | Why it matches |",
           "| --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
     for k, c in enumerate(top, 1):
         md.append(f"| {k} | {c['score']:.1f} | [{handle(c['username'])}]({c['url']}) | {beat(c)} | {c['views'] or 0:,} | "
-                  f"{c['comments'] or 0:,} | {c['duration'] or 0:.0f} s | {(value(c['fields'], 'format') or '').replace('_', ' ')} "
+                  f"{c['comments'] or 0:,} | {length(c)} | {(value(c['fields'], 'format') or '').replace('_', ' ')} "
                   f"| {'; '.join(c['why'])} |")
     md += ["", "## How each one is made", ""]
     for k, c in enumerate(top, 1):
@@ -339,8 +401,8 @@ def write(mine, measured, top, summary, spec, out, video):
                f"- On-screen hook: {value(f, 'written_hook') or '(none)'}",
                f"- Spoken hook: {value(f, 'verbal_hook') or '(none)'}",
                f"- Captions: {value(f, 'captions') or '(none)'}",
-               f"- Structure: {value(f, 'structure_pattern') or '?'} · audio {value(f, 'audio')} · a shot every "
-               f"{value(f, 'avg_shot_s')} s",
+               f"- Structure: {value(f, 'structure_pattern') or '?'} · audio {value(f, 'audio')} · "
+               f"{pace(value(f, 'avg_shot_s'))}",
                f"- Ask: {value(f, 'cta_mechanic')}" + (f" ({value(f, 'cta_keyword')})" if value(f, 'cta_keyword') else "")
                + (f": {value(f, 'cta_text')}" if value(f, 'cta_text') else ""), ""]
     md += ["## What the top matches have in common", "",
@@ -348,8 +410,8 @@ def write(mine, measured, top, summary, spec, out, video):
            f"- Text: " + ", ".join(f"{n}× {s}" for s, n in summary["captions"]),
            f"- Sound: " + ", ".join(f"{n}× {s}" for s, n in summary["audio"]),
            f"- Ask: " + ", ".join(f"{n}× {s}" for s, n in summary["cta"]),
-           f"- Length: median {summary['length_s']} s (yours {measured['length_s']} s); a shot every "
-           f"{summary['avg_shot_s']} s (yours {measured['avg_shot_s']} s)", "",
+           f"- Length: median {summary['length_s']} s (yours {measured['length_s']} s); {pace(summary['avg_shot_s'])} "
+           f"(yours: {'one continuous shot' if not measured['cuts'] else pace(measured['avg_shot_s'])})", "",
            f"## The layout to use: `{spec['layout']}`", "",
            "`reel.suggested.json` starts it. Write the hook in the pattern of the winners' hooks it lists, from what's "
            "true about this video, fill the blanks, save it as `reel.json` and run `reel.py`. "
@@ -385,7 +447,7 @@ def main():
         saved.write_text(json.dumps({**mine, "_video": vkey, "_measured": {k: v for k, v in measured.items()
                                                                            if k != "transcript"}}, indent=1))
     ranked, pool = [], candidates(conn)
-    rare = rarity(pool)
+    rare = Rarity(pool)
     for c in pool:
         s, why = score(mine, measured, c, args.project, rare)
         ranked.append({**c, "score": s, "why": why})
