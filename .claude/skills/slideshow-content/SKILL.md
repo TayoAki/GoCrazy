@@ -1,6 +1,6 @@
 ---
 name: slideshow-content
-description: Research the TikTok photo slideshows and Instagram carousels that outperform in a niche, find the proven formulas (plays ÷ followers, saves per 1,000 plays), and build ONE post from the version of each element that won, with every number checked against a primary source and a written case for why it should work. Renders ready-to-post 3:4 slides with real, licensed product photos found online (never generated), and turns a person's own before/after clip into a reel in the winning format, then sends either to TikTok as a draft. Use this whenever someone wants slideshow or carousel content for an app, brand or creator, e.g. "what slides should we make to market X", "find the outlier slideshows in this niche", "recreate this outlier", "make the slide templates", "a carousel for my app", "put real product photos in the slides", "turn my transformation video into content for my app", even if they never say "slideshow". For talking-head reel, TikTok or Shorts scripts use short-form-content instead.
+description: Research the TikTok photo slideshows and Instagram carousels that outperform in a niche, find the proven formulas (plays ÷ followers, saves per 1,000 plays), and build ONE post from the version of each element that won, with every number checked against a primary source and a written case for why it should work. Renders ready-to-post 3:4 slides with real, licensed product photos found online (never generated), and matches a person's own video to the winning videos and edits it their way (talking head, voiceover, green screen, text over a clip), then sends either to TikTok as a draft. Use this whenever someone wants slideshow or carousel content for an app, brand or creator, e.g. "what slides should we make to market X", "find the outlier slideshows in this niche", "recreate this outlier", "a carousel for my app", "put real product photos in the slides", "edit my video like the outliers", even if they never say "slideshow". For talking-head reel, TikTok or Shorts scripts use short-form-content instead.
 ---
 
 # Slideshow content: from outliers to a post that's ready to shoot
@@ -372,26 +372,43 @@ Zip the post folder and send it with the file tool when you have one. Finish wit
 is, why it should work, and what the person does next (usually: take the photos, drop them in `photos/`, run
 `render.py`).
 
-## When the person brings a video: the body-turn reel
+## When the person brings a video
 
-Sometimes the person brings a clip instead of asking for slides, e.g. their own before/after. Match it to the
-research by format, not topic: search the outliers for posts that show the same thing (`formulas.py refs`, or the
-teardowns' `format`, `written_hook` and `captions` fields), then copy that layout rather than designing one around
-the clip. For a before/after body turn, the layout is built: `references/reel.md` has the evidence, the caption, the
-rules and the commands. In short:
+Sometimes the person brings a clip instead of asking for slides: their own before/after, a talking clip, a voiceover.
+Don't design an edit around it. Match it to the research's winning videos and edit it the way they're edited.
+`references/video-layouts.md` has the scoring, the evidence for each layout and every key.
 
 ```bash
-python3 $S/reel.py briefs/<slug>          # reads briefs/<slug>/reel.json -> out/reel.mp4 (9:16, square pixels)
+python3 $S/match.py briefs/<slug>/assets/clip.mp4 --post briefs/<slug> --project <id>
+#   -> match/matches.md (the matches, their numbers and how each is made), match/sheet.jpg, reel.suggested.json
+python3 $S/reel.py briefs/<slug>          # reads briefs/<slug>/reel.json -> out/reel.mp4 (9:16) and out/reel-preview.jpg
 python3 $S/send-drafts.py send briefs/<slug> --account <id> --caption-file briefs/<slug>/caption.txt \
   --video briefs/<slug>/out/reel.mp4
 ```
 
-- The clip is the person's own, untouched and slowed so each state reads. The hook sits in a black box on the wall
-  above the head, below the apps' top bars. A second line ("here's the N things I did") joins a third of the way in.
-- No watermark on the clip. The product closes the video with its logo, like TikTok's end card.
-- The timeframe and the list in the caption are the person's own words. If any of the clip is made with AI, the
-  caption says so and the post gets TikTok's AI-generated label.
+1. **Match.** `match.py` transcribes the clip, has the research app's AI describe it in the teardowns' own terms,
+   and ranks every torn-down reel and Short by format, rare shared traits (a "transformation" angle), subject, length
+   and pace. Look at `match/sheet.jpg`: drop a match whose frames look nothing like the clip, whatever its score.
+2. **Pick the layout the matches use.**
+   - `text`: no talking. A hook box above the clip, lines joining later, music added in the app. The body-turn
+     reveal is this layout, slowed and with wall added above the head (`references/reel.md`).
+   - `talking`: framed on the face, pauses cut, word-by-word captions, the hook on top, b-roll over the voice. A
+     voiceover is this with b-roll over most of it.
+   - `green-screen`: the person cut out, chest up, in front of the screenshots or photos they talk about.
+3. **Write reel.json** from `reel.suggested.json`.
+   - The hook follows the winners' pattern, with what's true for this clip.
+   - The captions copy the matches' style.
+   - B-roll and backgrounds are real: the person's own, the product's screenshots, or licensed photos.
+   - For a talking clip, read `out/work/words-*.json` after the first build and fix misheard names.
+4. **Check** `out/reel-preview.jpg` and a one-frame-a-second strip, then watch it with the sound on.
+5. **Caption and send.** The caption copies the matches' ask (`matches.md` lists each one). Send the video as a
+   draft.
+
+- No watermark on the clip. The product closes the video with its logo, like TikTok's end card (`end_card`).
+- Timeframes, lists and results are the person's own words. If any of the clip is made with AI, the caption says so
+  and the post gets TikTok's AI-generated label.
 - Don't credit the product for a result that came before it.
+- The first match or talking build sets up the video tools (about 1.3 GB, one time).
 
 ## When the person comes back with photos
 

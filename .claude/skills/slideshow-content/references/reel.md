@@ -76,9 +76,11 @@ Before and after are real photos; the turn between them is made with AI.
 
 ## Build it and send it
 
+It's the `text` layout (references/video-layouts.md has every key), slowed and with wall added above the head:
+
 ```bash
-# briefs/<slug>/reel.json (every key but video and hook is optional; the defaults are shown)
-{"video": "assets/clip.mp4", "hook": "I gave myself 365 days, and\nthis is what happened...",
+# briefs/<slug>/reel.json
+{"layout": "text", "video": "assets/clip.mp4", "hook": "I gave myself 365 days, and\nthis is what happened...",
  "second_line": "↓ here's the 2 things I did ↓", "second_line_at": 0.33, "slow": 2.0,
  "headroom": 340, "text_top": 200,
  "end_card": {"icon": "assets/app-icon-1024.png", "name": "Weight Class", "where": "Free on the App Store",
@@ -92,7 +94,8 @@ python3 $S/send-drafts.py send briefs/<slug> --account <id> --caption-file brief
 
 - `second_line_at` is a fraction of the slowed clip (0.33) or, above 1, seconds.
 - `headroom: 0` keeps the clip where it is and puts the hook over it; use it when there's already wall above the head.
-- `slow: 1` keeps the original speed; use it when each state already holds for a few seconds.
+- `slow: 1` keeps the original speed (the layout's default); use it when each state already holds for a few
+  seconds.
 - Leave out `end_card` for no closing logo (a creator's own transformation with no product).
 - The build takes about 4 minutes for an 8 s clip slowed 2×: motion interpolation is the slow part.
 
